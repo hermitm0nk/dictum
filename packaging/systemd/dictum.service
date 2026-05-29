@@ -1,0 +1,12 @@
+[Unit]
+Description=Dictum voice dictation daemon
+After=graphical-session.target pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/dictum daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

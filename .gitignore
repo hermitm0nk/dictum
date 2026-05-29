@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Local runtime artifacts
+*.wav
+*.flac
+*.mp3
+*.ogg
+recordings/
+transcripts/
+
+# Secrets and local config
+.env
+config.local.toml

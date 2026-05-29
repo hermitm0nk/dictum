@@ -1,0 +1,16 @@
+[profiles.default]
+result = "paste"
+prompt = "Polish this dictated text for clarity while preserving intent."
+
+[profiles.default.asr]
+backend = "parakeet"
+model = "parakeet-tdt-v3-0.6b"
+device = "cuda"
+precision = "float16"
+
+[profiles.default.llm]
+backend = "openai-compatible"
+base_url = "http://127.0.0.1:8080/v1"
+model = "qwen3.5-4b-3bit"
+temperature = 0.2
+timeout_seconds = 20
