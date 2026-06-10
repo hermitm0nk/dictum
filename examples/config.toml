@@ -4,13 +4,22 @@ prompt = "Polish this dictated text for clarity while preserving intent."
 
 [profiles.default.asr]
 backend = "parakeet"
-model = "parakeet-tdt-v3-0.6b"
-device = "cuda"
-precision = "float16"
+model = "parakeet-tdt-0.6b-v3-q4_k"
+device = "cpu"
+precision = "q4_k"
 
 [profiles.default.llm]
-backend = "openai-compatible"
-base_url = "http://127.0.0.1:8080/v1"
-model = "qwen3.5-4b-3bit"
+backend = "managed-local"  # managed-local, openai-compatible, none
+model_path = "~/.cache/dictum/models/Qwen3.5-4B-Q3_K_M.gguf"
+binary_path = "~/.dictum/bin/llama-server"
+port = 8080
+ctx_size = 4096
+n_gpu_layers = -1  # -1 = all layers on GPU
+
+# For openai-compatible backend (remote or externally managed):
+# backend = "openai-compatible"
+# base_url = "http://127.0.0.1:8080/v1"
+# model = "qwen3.5-4b-3bit"
+
 temperature = 0.2
 timeout_seconds = 20
