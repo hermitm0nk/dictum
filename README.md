@@ -2,7 +2,7 @@
 
 Dictum is a Python voice-to-text command tool designed for Wayland compositors
 such as Hyprland and Sway. It is intended to be triggered from a hotkey,
-record microphone audio, transcribe it with NVIDIA Parakeet TDT v3 0.6B, polish
+record microphone audio, transcribe it with Parakeet TDT v3 0.6B, polish
 the transcription with a local or cloud LLM, and send the final text to the
 active window, clipboard, stdout, or a file.
 
@@ -53,7 +53,7 @@ idle -> recording -> transcribing -> polishing -> pasting -> idle
 
 ### 1. Prerequisites
 
-- **GPU**: NVIDIA GPU with Vulkan support (see [Why NVIDIA?](#why-nvidia))
+- **GPU**: Discrete GPU with Vulkan support
 - **Vulkan SDK**: `vulkan-devel` (Arch) / `vulkan-sdk` (others)
 - **Build tools**: `cmake`, `ninja`, `gcc`/`clang`
 - **Python**: 3.11+ with `uv` (recommended) or `pip`
@@ -202,52 +202,3 @@ Reload config:
 ```bash
 hyprctl reload
 ```
-
----
-
-## Why NVIDIA GPU? {#why-nvidia}
-
-Dictum uses **Vulkan-backed llama.cpp and CrispASR** for local inference. The choice of NVIDIA over iGPU (AMD Radeon/Ryzen) is driven by:
-
-### 1. **Vulkan Driver Maturity**
-- **NVIDIA**: Proprietary driver has production-grade Vulkan support with full feature parity.
-- **AMD (RADV)**: Open-source RADV driver is excellent for graphics but historically has gaps in compute workloads (subgroup operations, timeline semaphores, sparse bindings) that llama.cpp/ggml relies on.
-
-### 2. **ggml/llama.cpp Vulkan Backend**
-- The ggml Vulkan backend (`ggml-vulkan`) is developed and tested primarily on NVIDIA.
-- AMD support exists but hits edge cases: validation errors, missing extensions, performance regressions.
-- NVIDIA "just works" for the tensor operations (GEMM, attention, RoPE) used by transformer models.
-
-### 3. **VRAM vs. Shared Memory**
-- Discrete NVIDIA GPUs have dedicated VRAM (8–24 GB) → larger models fit entirely on GPU.
-- iGPU shares system RAM → limited by bandwidth (DDR5 ~100 GB/s vs. GDDR6 ~500 GB/s), smaller usable allocation.
-
-### 4. **Model Quantization Targets**
-- Dictum defaults to **3-bit (Qwen) / 4-bit (Parakeet)** GGUF quantizations.
-- These are optimized for GPU tensor cores; CPU fallback is ~10–20× slower.
-- On iGPU, the memory bandwidth bottleneck makes quantized inference only marginally faster than CPU.
-
-### 5. **CrispASR / Parakeet**
-- CrispASR's GGML backend inherits the same Vulkan constraints.
-- Parakeet TDT 0.6B runs acceptably on CPU (single-threaded ~1.5× realtime), but the daemon keeps it warm on GPU for sub-second latency.
-
-### Can It Work on AMD?
-
-Yes, with caveats:
-- Set `GGML_VULKAN=1` + `RADV_PERFTEST=ngg,nggc` + `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json`
-- May need `LLAMA_VULKAN=1` and latest mesa-git/radv-git
-- Expect occasional validation layers errors, lower throughput
-- CPU fallback (`-ngl 0`) is always an option — Parakeet on CPU is usable; Qwen 4B on CPU is slow (~2–3 tokens/s)
-
-### Summary
-
-| Factor | NVIDIA (Discrete) | AMD iGPU (Ryzen) |
-|--------|-------------------|------------------|
-| Vulkan compute | ✅ Mature | ⚠️ Gaps in compute |
-| VRAM | 8–24 GB dedicated | Shared system RAM |
-| Bandwidth | ~500 GB/s (GDDR6) | ~100 GB/s (DDR5) |
-| llama.cpp Vulkan | Primary target | Secondary |
-| CrispASR Vulkan | Tested | Limited testing |
-| Quantized inference | Fast (tensor cores) | Bandwidth-bound |
-
-**Default configuration assumes NVIDIA + Vulkan**. To use CPU-only: set `n_gpu_layers = 0` in profile or pass `-ngl 0` to llama-server.
