@@ -4,18 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from importlib.resources import files
 from pathlib import Path
 
 import httpx
 
 from dictum.backends import LlmBackend
 from dictum.models import Profile, Transcript
+from dictum.models_loader import ensure_llm_model
 
 log = logging.getLogger(__name__)
 
 
-DEFAULT_MODEL = Path.home() / ".cache" / "dictum" / "models" / "Qwen3.5-4B-Q3_K_M.gguf"
-DEFAULT_BINARY = Path.home() / ".dictum" / "bin" / "llama-server"
+def _bundled_binary(name: str) -> str:
+    """Resolve a bundled native binary from the installed package."""
+    return str(files("dictum").joinpath("bin", name))
+
+
+def _default_model() -> Path:
+    return Path(os.environ.get("DICTUM_LLM_MODEL", str(Path.home() / ".cache" / "dictum" / "models" / "Qwen3.5-4B-Q3_K_M.gguf")))
+
+
+def _default_binary() -> Path:
+    return Path(os.environ.get("DICTUM_LLM_BIN", str(_bundled_binary("llama-server"))))
 
 
 class ManagedLocalLlm(LlmBackend):
@@ -36,8 +48,8 @@ class ManagedLocalLlm(LlmBackend):
         timeout: float = 20.0,
         max_tokens: int = 512,
     ) -> None:
-        self.model_path = model_path or DEFAULT_MODEL
-        self.binary_path = binary_path or DEFAULT_BINARY
+        self.model_path = model_path or _default_model()
+        self.binary_path = binary_path or _default_binary()
         self.port = port
         self.ctx_size = ctx_size
         self.n_gpu_layers = n_gpu_layers
@@ -63,7 +75,8 @@ class ManagedLocalLlm(LlmBackend):
         if not self.binary_path.exists():
             raise FileNotFoundError(f"llama-server binary not found at {self.binary_path}")
         if not self.model_path.exists():
-            raise FileNotFoundError(f"Model not found at {self.model_path}")
+            log.info("LLM model not found, downloading...")
+            self.model_path = ensure_llm_model()
 
         log.info("Starting llama-server on port %d...", self.port)
 

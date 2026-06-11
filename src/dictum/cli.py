@@ -199,3 +199,21 @@ def once(
 
 if __name__ == "__main__":
     app()
+
+
+def once_callback(
+    profile: str = "default",
+    result: str = "paste",
+    duration: int = 30,
+) -> None:
+    """Entry point for `dictum-once` / `uvx dictum-once`."""
+    # Directly call the once command function (typer decorators preserve the function)
+    once(profile=profile, result=result, duration=duration)
+
+
+def toggle_callback(
+    profile: str = "default",
+    result: str = "paste",
+) -> None:
+    """Entry point for `dictum-toggle` / `uvx dictum-toggle`."""
+    toggle(profile=profile, result=result)
