@@ -34,7 +34,7 @@ class OpenAILLM(LlmBackend):
         max_tokens: int = 512,
     ) -> None:
         self.base_url = (base_url or _DEFAULT_BASE_URL).rstrip("/")
-        self.model = model or "qwen3.5-4b"
+        self.model = model or "qwen3.5-4b-q3_k_m"
         self.temperature = temperature
         self.timeout = timeout
         self.max_tokens = max_tokens

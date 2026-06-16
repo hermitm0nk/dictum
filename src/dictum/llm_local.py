@@ -147,7 +147,7 @@ class ManagedLocalLlm(LlmBackend):
         )
 
         payload: dict[str, object] = {
-            "model": profile.llm.model if profile.llm else "qwen3.5-4b-3bit",
+            "model": profile.llm.model if profile.llm else "qwen3.5-4b-q3_k_m",
             "messages": [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": raw},

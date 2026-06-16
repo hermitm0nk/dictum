@@ -8,7 +8,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 ASR_MODEL_FILENAME = "parakeet-tdt-0.6b-v3-q4_k.gguf"
-LLM_MODEL_FILENAME = "qwen2.5-4b-instruct-q3_k_m.gguf"
+LLM_MODEL_FILENAME = "Qwen3.5-4B-Q3_K_M.gguf"
 
 
 def xdg_cache_home() -> Path:
@@ -49,7 +49,7 @@ ASR_MODEL = {
 }
 
 LLM_MODEL = {
-    "repo_id": "Qwen/Qwen2.5-4B-Instruct-GGUF",
+    "repo_id": "unsloth/Qwen3.5-4B-GGUF",
     "filename": LLM_MODEL_FILENAME,
 }
 

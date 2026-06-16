@@ -58,7 +58,7 @@ class LlmConfig(BaseModel):
     
     # For openai-compatible backend (remote or externally managed)
     base_url: HttpUrl | None = None
-    model: str = "qwen2.5-4b-instruct-q3_k_m"
+    model: str = "qwen3.5-4b-q3_k_m"
     
     # Common
     temperature: float = 0.2

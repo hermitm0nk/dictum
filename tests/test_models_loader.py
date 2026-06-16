@@ -23,7 +23,7 @@ def test_default_model_paths_share_model_dir(monkeypatch) -> None:
     monkeypatch.setenv("DICTUM_MODEL_DIR", "/tmp/dictum-models")
 
     assert asr_model_path() == Path("/tmp/dictum-models/parakeet-tdt-0.6b-v3-q4_k.gguf")
-    assert llm_model_path() == Path("/tmp/dictum-models/qwen2.5-4b-instruct-q3_k_m.gguf")
+    assert llm_model_path() == Path("/tmp/dictum-models/Qwen3.5-4B-Q3_K_M.gguf")
 
 
 def test_model_paths_can_be_overridden_individually(monkeypatch) -> None:

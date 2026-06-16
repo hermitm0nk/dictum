@@ -11,7 +11,7 @@ precision = "q4_k"
 [profiles.default.llm]
 backend = "managed-local"  # managed-local, openai-compatible, none
 # Leave model_path and binary_path unset to use Dictum's defaults:
-# model_path = "$XDG_CACHE_HOME/dictum/models/qwen2.5-4b-instruct-q3_k_m.gguf"
+# model_path = "$XDG_CACHE_HOME/dictum/models/Qwen3.5-4B-Q3_K_M.gguf"
 # binary_path = "<installed package>/dictum/_native/bin/llama-server"
 port = 8080
 ctx_size = 4096
@@ -20,7 +20,7 @@ n_gpu_layers = -1  # -1 = all layers on GPU
 # For openai-compatible backend (remote or externally managed):
 # backend = "openai-compatible"
 # base_url = "http://127.0.0.1:8080/v1"
-# model = "qwen2.5-4b-instruct-q3_k_m"
+# model = "qwen3.5-4b-q3_k_m"
 
 temperature = 0.2
 timeout_seconds = 20

@@ -93,9 +93,9 @@ huggingface-cli download cstr/parakeet-tdt-0.6b-v3-GGUF \
   parakeet-tdt-0.6b-v3-q4_k.gguf \
   --local-dir ~/.cache/dictum/models/
 
-# Qwen LLM (3-bit quant for polishing)
-huggingface-cli download Qwen/Qwen2.5-4B-Instruct-GGUF \
-  qwen2.5-4b-instruct-q3_k_m.gguf \
+# Qwen LLM (Q3 quant for polishing)
+huggingface-cli download unsloth/Qwen3.5-4B-GGUF \
+  Qwen3.5-4B-Q3_K_M.gguf \
   --local-dir ~/.cache/dictum/models/
 ```
 
