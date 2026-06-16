@@ -58,26 +58,32 @@ idle -> recording -> transcribing -> polishing -> pasting -> idle
 - **Build tools**: `cmake`, `ninja`, `gcc`/`clang`
 - **Python**: 3.11+ with `uv` (recommended) or `pip`
 
-### 2. Install Native Dependencies
+### 2. Install Dictum
 
 ```bash
-# Clone repo
-git clone https://github.com/your-repo/dictum.git
+# From PyPI, once published
+uv tool install dictum
+
+# Or from a local source checkout while developing
+git clone https://github.com/hermitm0nk/dictum.git
 cd dictum
-
-# Build llama.cpp (Vulkan) + CrispASR from source
-./scripts/build.sh
-
-# Deploy binaries + libs to ~/.dictum/ (rpath-linked, no LD_LIBRARY_PATH needed)
-./scripts/deploy.sh
+uv tool install .
 ```
 
 **What gets built:**
 - `llama.cpp` → `llama-server` (Vulkan backend, no CUDA)
 - `CrispASR` → `parakeet-main` (Parakeet TDT v0.6b GGUF)
 
-Both binaries are built with `CMAKE_INSTALL_RPATH='$ORIGIN/../lib/<name>'` so they
-find their shared libraries without `LD_LIBRARY_PATH`.
+The wheel contains both binaries and their shared libraries under
+`dictum/_native/`. Both binaries are built with
+`CMAKE_INSTALL_RPATH='$ORIGIN/../lib/<name>'` so they find their bundled shared
+libraries without `LD_LIBRARY_PATH`.
+
+Native dependency source checkouts are cached under
+`$DICTUM_NATIVE_SOURCE_CACHE` when set, otherwise under
+`$XDG_CACHE_HOME/dictum/native-src` or `~/.cache/dictum/native-src`. CMake build
+directories stay temporary so repeated local builds reuse git checkouts without
+reusing stale build-tool paths from isolated Python build environments.
 
 ### 3. Download Models
 
@@ -88,24 +94,16 @@ huggingface-cli download cstr/parakeet-tdt-0.6b-v3-GGUF \
   --local-dir ~/.cache/dictum/models/
 
 # Qwen LLM (3-bit quant for polishing)
-huggingface-cli download <qwen-repo> <qwen-model>.gguf \
+huggingface-cli download Qwen/Qwen2.5-4B-Instruct-GGUF \
+  qwen2.5-4b-instruct-q3_k_m.gguf \
   --local-dir ~/.cache/dictum/models/
 ```
 
-### 4. Install Python Package
+By default Dictum downloads models on first use into
+`$DICTUM_MODEL_DIR` when set, otherwise into
+`$XDG_CACHE_HOME/dictum/models` or `~/.cache/dictum/models`.
 
-```bash
-# As a uv tool (recommended — global `dictum` command, editable)
-uv tool install -e .
-
-# Or install globally (non-editable)
-uv tool install .
-
-# Or with pipx
-pipx install -e .
-```
-
-### 5. Configure (Optional)
+### 4. Configure (Optional)
 
 ```bash
 mkdir -p ~/.config/dictum

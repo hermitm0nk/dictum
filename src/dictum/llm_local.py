@@ -5,29 +5,37 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from importlib.resources import files
 from pathlib import Path
 
 import httpx
 
+from dictum.accel import native_binary, vulkan_available
 from dictum.backends import LlmBackend
 from dictum.models import Profile, Transcript
-from dictum.models_loader import ensure_llm_model
+from dictum.models_loader import ensure_llm_model, llm_model_path
 
 log = logging.getLogger(__name__)
 
 
-def _bundled_binary(name: str) -> str:
-    """Resolve a bundled native binary from the installed package."""
-    return str(files("dictum").joinpath("bin", name))
-
-
 def _default_model() -> Path:
-    return Path(os.environ.get("DICTUM_LLM_MODEL", str(Path.home() / ".cache" / "dictum" / "models" / "Qwen3.5-4B-Q3_K_M.gguf")))
+    return llm_model_path()
 
 
 def _default_binary() -> Path:
-    return Path(os.environ.get("DICTUM_LLM_BIN", str(_bundled_binary("llama-server"))))
+    return Path(os.environ.get("DICTUM_LLM_BIN", str(native_binary("llama-server"))))
+
+
+class NoopLLM(LlmBackend):
+    """No-op LLM backend used when Vulkan is unavailable."""
+
+    def __init__(self) -> None:
+        log.warning(
+            "LLM polishing disabled: Vulkan not available. "
+            "Raw transcript will be used as-is."
+        )
+
+    async def polish(self, transcript: Transcript, profile: Profile) -> str:
+        return transcript.text
 
 
 class ManagedLocalLlm(LlmBackend):
@@ -160,10 +168,17 @@ class ManagedLocalLlm(LlmBackend):
         return text
 
 
-def create_llm_backend(profile: Profile) -> LlmBackend | None:
-    """Factory to create the appropriate LLM backend from profile config."""
-    if not profile.llm:
-        return None
+def create_llm_backend(profile: Profile) -> LlmBackend:
+    """Factory to create the appropriate LLM backend from profile config.
+
+    When Vulkan is unavailable, returns NoopLLM regardless of profile config.
+    """
+    if not profile.llm or profile.llm.backend == "none":
+        return NoopLLM()
+
+    # Vulkan is required for managed-local GPU inference
+    if not vulkan_available():
+        return NoopLLM()
 
     backend = profile.llm.backend.lower()
 
@@ -186,9 +201,6 @@ def create_llm_backend(profile: Profile) -> LlmBackend | None:
             temperature=profile.llm.temperature,
             timeout=profile.llm.timeout_seconds,
         )
-
-    if backend == "none":
-        return None
 
     log.warning("Unknown LLM backend: %s, falling back to openai-compatible", backend)
     from dictum.llm import OpenAILLM

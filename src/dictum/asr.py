@@ -5,40 +5,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from importlib.resources import files
 from pathlib import Path
 
 import httpx
 
+from dictum.accel import native_binary
 from dictum.backends import AsrBackend
 from dictum.models import Profile, Transcript
-from dictum.models_loader import ensure_asr_model
+from dictum.models_loader import asr_model_path, ensure_asr_model
 
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8081
 
 
-def _bundled_binary(name: str) -> str:
-    """Resolve a bundled native binary from the installed package."""
-    return str(files("dictum").joinpath("bin", name))
-
-
-def _bundled_lib_dir(name: str) -> str:
-    """Resolve a bundled lib directory (llama or crispasr)."""
-    return str(files("dictum").joinpath("lib", name))
-
-
 def _default_binary() -> Path:
-    return Path(os.environ.get("DICTUM_PARAKEET_BIN", str(_bundled_binary("parakeet-main"))))
+    return Path(os.environ.get("DICTUM_PARAKEET_BIN", str(native_binary("parakeet-main"))))
 
 
 def _default_model() -> Path:
-    return Path(os.environ.get("DICTUM_PARAKEET_MODEL", str(Path.home() / ".cache" / "dictum" / "models" / "parakeet-tdt-0.6b-v3-q4_k.gguf")))
-
-
-def _default_lib_dir() -> Path:
-    return Path(os.environ.get("DICTUM_PARAKEET_LIB", str(_bundled_lib_dir("crispasr"))))
+    return asr_model_path()
 
 
 class ParakeetASR(AsrBackend):
@@ -55,14 +41,12 @@ class ParakeetASR(AsrBackend):
         self,
         binary: Path | None = None,
         model: Path | None = None,
-        lib_dir: Path | None = None,
         port: int = DEFAULT_PORT,
         threads: int = 4,
         use_server: bool = True,
     ) -> None:
         self.binary = binary or _default_binary()
         self.model = model or _default_model()
-        self.lib_dir = lib_dir or _default_lib_dir()
         self.port = port
         self.threads = threads
         self.use_server = use_server
@@ -83,8 +67,8 @@ class ParakeetASR(AsrBackend):
 
         if not self.binary.exists():
             raise FileNotFoundError(
-                f"crispasr binary not found at {self.binary}. "
-                "Build from https://github.com/CrispStrobe/CrispASR"
+                f"parakeet-main binary not found at {self.binary}. "
+                "Ensure the dictum wheel was built with native artifacts."
             )
         if not self.model.exists():
             log.info("Parakeet GGUF not found, downloading...")
@@ -167,8 +151,8 @@ class ParakeetASR(AsrBackend):
         """Transcribe via CrispASR CLI (cold start each time)."""
         if not self.binary.exists():
             raise FileNotFoundError(
-                f"crispasr binary not found at {self.binary}. "
-                "Build from https://github.com/CrispStrobe/CrispASR"
+                f"parakeet-main binary not found at {self.binary}. "
+                "Ensure the dictum wheel was built with native artifacts."
             )
         if not self.model.exists():
             log.info("Parakeet GGUF not found, downloading...")
@@ -182,7 +166,6 @@ class ParakeetASR(AsrBackend):
         ]
 
         log.info("ASR running: %s", " ".join(cmd))
-
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -206,8 +189,7 @@ def create_asr_backend(profile: Profile, use_server: bool = True) -> AsrBackend:
 
     if backend_name == "parakeet":
         return ParakeetASR(
-            binary=Path(os.environ.get("DICTUM_PARAKEET_BIN", _default_binary())),
-            model=Path(os.environ.get("DICTUM_PARAKEET_MODEL", _default_model())),
+            binary=_default_binary(),
             port=DEFAULT_PORT,
             threads=4,
             use_server=use_server,

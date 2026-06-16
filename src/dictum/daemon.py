@@ -41,7 +41,7 @@ class Daemon:
         # Backends
         self.recorder = Recorder()
         self.asr: AsrBackend = create_asr_backend(self.active_profile, use_server=True)
-        self.llm: LlmBackend | None = create_llm_backend(self.active_profile)
+        self.llm: LlmBackend = create_llm_backend(self.active_profile)
         self.output = OutputSink()
         self.notifier = Notifier()
 
@@ -120,7 +120,7 @@ class Daemon:
 
     async def _polish(self, transcript: Transcript, profile: Profile) -> str | None:
         """Polish transcript with LLM. Returns None on failure."""
-        if not profile.llm or self.llm is None:
+        if not profile.llm:
             return None
         try:
             self._set(DictumState.POLISHING)
@@ -269,14 +269,13 @@ class Daemon:
             log.error("Failed to start ASR backend: %s", exc)
             self._set(DictumState.FAILED, f"ASR backend failed to start: {exc}")
 
-        # Start LLM backend if available
-        if self.llm is not None:
-            try:
-                await self.llm.start()
-                log.info("LLM backend started")
-            except Exception as exc:
-                log.error("Failed to start LLM backend: %s", exc)
-                self._set(DictumState.FAILED, f"LLM backend failed to start: {exc}")
+        # Start LLM backend
+        try:
+            await self.llm.start()
+            log.info("LLM backend started")
+        except Exception as exc:
+            log.error("Failed to start LLM backend: %s", exc)
+            self._set(DictumState.FAILED, f"LLM backend failed to start: {exc}")
 
         self._shutdown_event = asyncio.Event()
 
@@ -315,13 +314,12 @@ class Daemon:
         except Exception as exc:
             log.error("Error stopping ASR backend: %s", exc)
 
-        # Stop LLM backend if available
-        if self.llm is not None:
-            try:
-                await self.llm.stop()
-                log.info("LLM backend stopped")
-            except Exception as exc:
-                log.error("Error stopping LLM backend: %s", exc)
+        # Stop LLM backend
+        try:
+            await self.llm.stop()
+            log.info("LLM backend stopped")
+        except Exception as exc:
+            log.error("Error stopping LLM backend: %s", exc)
 
         self._shutdown_event.set()
 
