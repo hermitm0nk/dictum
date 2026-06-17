@@ -11,7 +11,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Build options
 # ---------------------------------------------------------------------------
 option(DICTUM_BUILD_LLAMA   "Build llama.cpp (LLM server with Vulkan)"  ON)
-option(DICTUM_BUILD_CRISPASR "Build CrispASR (ASR engine, CPU only)"    ON)
+option(DICTUM_BUILD_CRISPASR "Build CrispASR (ASR engine, Vulkan)"      ON)
 
 set(DICTUM_NPROC "$ENV{DICTUM_NPROC}")
 if(NOT DICTUM_NPROC OR DICTUM_NPROC EQUAL 0)
@@ -77,7 +77,7 @@ if(DICTUM_BUILD_LLAMA)
 endif()
 
 # ---------------------------------------------------------------------------
-# 2. CrispASR  –  CPU only (Vulkan shader build is broken upstream)
+# 2. CrispASR  –  GPU-accelerated via Vulkan (shared with llama.cpp)
 # ---------------------------------------------------------------------------
 if(DICTUM_BUILD_CRISPASR)
   ExternalProject_Add(crispasr
@@ -91,7 +91,7 @@ if(DICTUM_BUILD_CRISPASR)
     CMAKE_ARGS
       -DCMAKE_BUILD_TYPE=Release
       -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-      -DGGML_VULKAN=OFF
+      -DGGML_VULKAN=ON
       -DCRISPASR_BUILD_EXAMPLES=ON
       -DCRISPASR_BUILD_TESTS=OFF
       -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF
@@ -140,5 +140,19 @@ if(DICTUM_BUILD_CRISPASR)
     FILES_MATCHING
       PATTERN "lib*.so*"
       PATTERN "lib*.dylib*"
+      # libggml-vulkan.so is handled below and flattened into the top-level
+      # lib dir so libggml.so can dlopen it via the binary's RPATH.
+      PATTERN "ggml-vulkan*" EXCLUDE
+  )
+  # ggml-vulkan ships its .so in a ggml-vulkan/ subdir, but libggml.so
+  # dlopens the backend with a bare soname using the parakeet-main RPATH
+  # ($ORIGIN/../lib/crispasr), so flatten the .so into the top-level lib dir
+  # (the trailing "/" on the source dir copies its contents, not the dir).
+  # SPIR-V shaders are embedded into the binary via ggml-vulkan-shaders.hpp,
+  # so we do not need to ship vulkan-shaders.spv.
+  install(DIRECTORY "${CRISPASR_BUILD_DIR}/ggml/src/ggml-vulkan/"
+    DESTINATION "${NATIVE_INSTALL_DIR}/lib/crispasr"
+    FILES_MATCHING
+      PATTERN "libggml-vulkan.so*"
   )
 endif()
