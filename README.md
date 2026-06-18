@@ -61,7 +61,7 @@ idle -> recording -> transcribing -> polishing -> pasting -> idle
 
 ```bash
 # From PyPI, once published
-uv tool install dictum
+uv tool install dictum-asr
 
 # Or from a local source checkout while developing
 git clone https://github.com/hermitm0nk/dictum.git
