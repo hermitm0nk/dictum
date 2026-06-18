@@ -116,11 +116,19 @@ class AsrBackend:
     async def transcribe(self, audio_path: Path) -> Transcript: ...
 ```
 
-Parakeet should run out-of-process. Performance matters more than keeping all
-logic inside one Python interpreter, so the ASR implementation may use a native
-executable, a Python worker with a different inference framework, or a local
-service that keeps GPU resources warm. The daemon should treat ASR as a worker
-boundary with clear input and output contracts.
+Parakeet runs out-of-process via a pre-built `crispasr-cli` binary (renamed
+`parakeet-main`) fetched from the pinned CrispASR GitHub release. Performance
+matters more than keeping all logic inside one Python interpreter, so the ASR
+implementation may use a native executable, a Python worker with a different
+inference framework, or a local service that keeps GPU resources warm. The
+daemon should treat ASR as a worker boundary with clear input and output
+contracts.
+
+The binary is downloaded on first run by `dictum.native_installer` into
+`$XDG_DATA_HOME/dictum/native/crispasr/<release>/` and launched by the daemon
+in `--server` mode (HTTP on port 8081) for warm latency. Users can pre-fetch it
+with `dictum native install`, or override the path entirely with
+`DICTUM_PARAKEET_BIN`.
 
 The first worker protocol can be simple: the daemon writes a recorded audio file
 and invokes or requests transcription from the configured ASR worker. Later
@@ -151,6 +159,13 @@ environment tuning until there is a concrete need.
 The preferred local LLM path is an OpenAI-compatible HTTP endpoint, such as a
 `llama.cpp` server with the chosen Qwen model already loaded on GPU. That keeps
 model lifetime outside the daemon and gives predictable warm latency.
+
+The `managed-local` backend ships a pre-built `llama-server` binary (Vulkan
+build, pinned to a specific llama.cpp release) downloaded on first run into
+`$XDG_DATA_HOME/dictum/native/llama/<release>/`. The binary has
+`RUNPATH=$ORIGIN` so it finds its sibling shared libraries without
+`LD_LIBRARY_PATH`. Users can pre-fetch via `dictum native install` or override
+the path with `DICTUM_LLM_BIN`.
 
 The same interface can support:
 
@@ -215,15 +230,19 @@ $XDG_CACHE_HOME/dictum/audio/
 Support both:
 
 - `dictum daemon` for direct foreground execution;
-- `systemd --user` service for normal daily use.
-
-The CLI can later grow `dictum service install`, but packaging should start with
-a checked-in example unit file.
+- `systemd --user` service for normal daily use, installed via
+  `dictum service install` (the unit file is bundled with the wheel as
+  `dictum/data/dictum.service` and copied to
+  `$XDG_CONFIG_HOME/systemd/user/dictum.service`). `dictum service status`
+  and `dictum service uninstall` round out the lifecycle.
 
 ## Settled Initial Decisions
 
 - Parakeet runs out-of-process through a worker, native executable, or local
   service so transcription performance can be optimized independently.
+- Native C++ binaries (llama.cpp, CrispASR) are no longer built from source at
+  wheel-build time. Pinned upstream GitHub releases are downloaded on first run
+  (or via `dictum native install`) into `$XDG_DATA_HOME/dictum/native/`.
 - The default audio input is the system's main PipeWire microphone.
 - Audio source selection is configurable by profile and CLI arguments.
 - Silence and speech detection should stay simple because the target dictation

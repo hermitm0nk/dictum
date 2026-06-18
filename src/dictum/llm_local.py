@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from dictum.accel import native_binary, vulkan_available
+from dictum.accel import ensure_native_binary, native_binary, native_env_for, vulkan_available
 from dictum.backends import LlmBackend
 from dictum.models import Profile, Transcript
 from dictum.models_loader import ensure_llm_model, llm_model_path
@@ -25,13 +25,19 @@ def _default_binary() -> Path:
     return Path(os.environ.get("DICTUM_LLM_BIN", str(native_binary("llama-server"))))
 
 
+def _is_managed_binary(binary: Path | None) -> bool:
+    """True if `binary` is the installer-managed default (no env override)."""
+    if binary is not None:
+        return False
+    return os.environ.get("DICTUM_LLM_BIN", "").strip() == ""
+
+
 class NoopLLM(LlmBackend):
     """No-op LLM backend used when Vulkan is unavailable."""
 
     def __init__(self) -> None:
         log.warning(
-            "LLM polishing disabled: Vulkan not available. "
-            "Raw transcript will be used as-is."
+            "LLM polishing disabled: Vulkan not available. Raw transcript will be used as-is."
         )
 
     async def polish(self, transcript: Transcript, profile: Profile) -> str:
@@ -41,8 +47,10 @@ class NoopLLM(LlmBackend):
 class ManagedLocalLlm(LlmBackend):
     """Manages a local llama-server process lifecycle.
 
-    Binary is built with rpath ($ORIGIN/../lib/llama) so it finds its
-    libraries without LD_LIBRARY_PATH.
+    The binary is fetched on first start from the upstream llama.cpp release
+    (pinned in dictum.native_installer) into $XDG_DATA_HOME/dictum/native/.
+    It ships with RUNPATH=$ORIGIN so it finds its sibling .so files; we also
+    set LD_LIBRARY_PATH defensively via native_env_for().
     """
 
     def __init__(
@@ -58,6 +66,7 @@ class ManagedLocalLlm(LlmBackend):
     ) -> None:
         self.model_path = model_path or _default_model()
         self.binary_path = binary_path or _default_binary()
+        self._binary_managed = _is_managed_binary(binary_path)
         self.port = port
         self.ctx_size = ctx_size
         self.n_gpu_layers = n_gpu_layers
@@ -80,8 +89,14 @@ class ManagedLocalLlm(LlmBackend):
             log.info("llama-server already running on port %d", self.port)
             return
 
-        if not self.binary_path.exists():
-            raise FileNotFoundError(f"llama-server binary not found at {self.binary_path}")
+        if self._binary_managed:
+            log.info("Ensuring llama-server binary is installed …")
+            self.binary_path = ensure_native_binary("llama-server")
+        elif not self.binary_path.exists():
+            raise FileNotFoundError(
+                f"llama-server binary not found at {self.binary_path}. "
+                "Set DICTUM_LLM_BIN or run `dictum native install`."
+            )
         if not self.model_path.exists():
             log.info("LLM model not found, downloading...")
             self.model_path = ensure_llm_model()
@@ -90,14 +105,20 @@ class ManagedLocalLlm(LlmBackend):
 
         cmd = [
             str(self.binary_path),
-            "-m", str(self.model_path),
-            "--port", str(self.port),
-            "--ctx-size", str(self.ctx_size),
-            "-ngl", str(self.n_gpu_layers),
+            "-m",
+            str(self.model_path),
+            "--port",
+            str(self.port),
+            "--ctx-size",
+            str(self.ctx_size),
+            "-ngl",
+            str(self.n_gpu_layers),
         ]
 
+        env = native_env_for("llama-server") if self._binary_managed else None
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -195,6 +216,7 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
 
     if backend == "openai-compatible":
         from dictum.llm import OpenAILLM
+
         return OpenAILLM(
             base_url=str(profile.llm.base_url) if profile.llm.base_url else "http://127.0.0.1:8080",
             model=profile.llm.model,
@@ -204,6 +226,7 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
 
     log.warning("Unknown LLM backend: %s, falling back to openai-compatible", backend)
     from dictum.llm import OpenAILLM
+
     return OpenAILLM(
         base_url=str(profile.llm.base_url) if profile.llm.base_url else "http://127.0.0.1:8080",
         model=profile.llm.model,

@@ -53,9 +53,8 @@ idle -> recording -> transcribing -> polishing -> pasting -> idle
 
 ### 1. Prerequisites
 
-- **GPU**: Discrete GPU with Vulkan support
-- **Vulkan SDK**: `vulkan-devel` (Arch) / `vulkan-sdk` (others)
-- **Build tools**: `cmake`, `ninja`, `gcc`/`clang`
+- **GPU**: Discrete GPU with Vulkan support (optional but recommended)
+- **Vulkan loader**: `libvulkan1` / `vulkan-loader` + a compatible ICD
 - **Python**: 3.11+ with `uv` (recommended) or `pip`
 
 ### 2. Install Dictum
@@ -70,20 +69,31 @@ cd dictum
 uv tool install .
 ```
 
-**What gets built:**
-- `llama.cpp` → `llama-server` (Vulkan backend, no CUDA)
-- `CrispASR` → `parakeet-main` (Parakeet TDT v0.6b GGUF)
+The wheel is pure Python and tiny (tens of KB). The native C++ binaries
+are no longer built from source at install time. Instead, Dictum
+downloads pinned upstream releases on first use:
 
-The wheel contains both binaries and their shared libraries under
-`dictum/_native/`. Both binaries are built with
-`CMAKE_INSTALL_RPATH='$ORIGIN/../lib/<name>'` so they find their bundled shared
-libraries without `LD_LIBRARY_PATH`.
+- `llama.cpp` → `llama-server` (Vulkan build, `b9699`)
+- `CrispASR` → `parakeet-main` (Vulkan build, `v0.7.2`)
 
-Native dependency source checkouts are cached under
-`$DICTUM_NATIVE_SOURCE_CACHE` when set, otherwise under
-`$XDG_CACHE_HOME/dictum/native-src` or `~/.cache/dictum/native-src`. CMake build
-directories stay temporary so repeated local builds reuse git checkouts without
-reusing stale build-tool paths from isolated Python build environments.
+Pre-fetch them explicitly (recommended before binding a hotkey):
+
+```bash
+dictum native install            # fetch both, Vulkan variant
+dictum native install --lib llama
+dictum native install --variant cpu   # if no Vulkan ICD is present
+dictum native status             # show what's installed and where
+```
+
+Binaries land under `$DICTUM_NATIVE_DIR` when set, otherwise under
+`$XDG_DATA_HOME/dictum/native/`, or `~/.local/share/dictum/native/`.
+The `llama-server` binary ships with `RUNPATH=$ORIGIN` so it finds its
+sibling `.so` files automatically; `parakeet-main` is statically linked.
+No `LD_LIBRARY_PATH` is required in normal use.
+
+To override the bundled binaries entirely, set `DICTUM_LLM_BIN` and/or
+`DICTUM_PARAKEET_BIN` to point at your own builds — Dictum will not
+attempt to download when an override is set.
 
 ### 3. Download Models
 
@@ -157,17 +167,24 @@ dictum status --json
 ## Systemd User Service (Persistent Daemon)
 
 ```bash
-# Install service (does NOT auto-start on boot)
-mkdir -p ~/.config/systemd/user
-cp packaging/systemd/dictum.service ~/.config/systemd/user/
+# Install, enable (starts at login), but do not start now
+dictum service install
 
-systemctl --user daemon-reload
-systemctl --user enable --now dictum   # start now
-# systemctl --user start dictum        # start manually
-# systemctl --user stop dictum         # stop manually
+# Install and start immediately
+dictum service install --now
+
+# Check status
+dictum service status
+
+# Remove the service
+dictum service uninstall
 ```
 
-**Service file** (`packaging/systemd/dictum.service`):
+The unit file is bundled with the wheel and copied to
+`~/.config/systemd/user/dictum.service` (or `$XDG_CONFIG_HOME/systemd/user/`).
+User units start at graphical/login session, not at boot.
+
+The bundled unit (`dictum/data/dictum.service`):
 ```ini
 [Unit]
 Description=Dictum voice dictation daemon
@@ -183,7 +200,10 @@ RestartSec=2
 WantedBy=default.target
 ```
 
-> **Note**: `enable --now` starts it immediately. Remove `--now` if you prefer manual start.
+You can still manage the service directly with `systemctl --user
+{start,stop,restart,status} dictum`. Edit the installed unit file to
+customize `ExecStart` (e.g. add `--profile` flags) and run
+`systemctl --user daemon-reload`.
 
 ---
 

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import time
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Annotated, Any, TypeVar
 
 import typer
@@ -35,6 +38,251 @@ def _ipc(cmd: str, **kw: object) -> dict[str, Any]:
     except IpcError as exc:
         _die(str(exc))
         return {}  # unreachable but satisfies type checker
+
+
+# ──────────────────────────────────────────────
+# native (download/manage pre-built C++ binaries)
+# ──────────────────────────────────────────────
+
+native_app = typer.Typer(
+    no_args_is_help=True,
+    help="Download and inspect pre-built llama.cpp / CrispASR binaries.",
+)
+app.add_typer(native_app, name="native")
+
+
+@native_app.command("install")
+def native_install(
+    lib: Annotated[
+        str,
+        typer.Option("--lib", help="Which library: llama, crispasr, or all (default)."),
+    ] = "all",
+    variant: Annotated[
+        str,
+        typer.Option("--variant", help="Build variant: vulkan (default) or cpu."),
+    ] = "vulkan",
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-download even if already installed.")
+    ] = False,
+) -> None:
+    """Download and extract pinned llama.cpp and/or CrispASR releases."""
+    from dictum.native_installer import (
+        NativeLib,
+        NativeVariant,
+        install_lib,
+        is_installed,
+    )
+
+    try:
+        v = NativeVariant(variant)
+    except ValueError:
+        _die(f"Invalid --variant {variant!r}; choose 'vulkan' or 'cpu'.")
+        return
+
+    if lib == "all":
+        libs = [NativeLib.LLAMA, NativeLib.CRISPASR]
+    elif lib in ("llama", "crispasr"):
+        libs = [NativeLib(lib)]
+    else:
+        _die(f"Invalid --lib {lib!r}; choose 'llama', 'crispasr', or 'all'.")
+        return
+
+    failed = False
+    for name in libs:
+        if not force and is_installed(name, v):
+            console.print(f"[green]✓[/green] {name.value} {v.value} already installed")
+            continue
+        try:
+            path = install_lib(name, v, force=force)
+            console.print(f"[green]✓[/green] Installed {name.value} → {path}")
+        except Exception as exc:
+            console.print(f"[red]✗[/red] {name.value}: {exc}")
+            failed = True
+
+    if failed:
+        raise typer.Exit(1)
+
+
+@native_app.command("status")
+def native_status() -> None:
+    """Show which native libraries are installed, where, and at which release."""
+    from dictum.native_installer import install_status, native_root
+
+    console.print(f"[dim]native root:[/dim] {native_root()}")
+    status = install_status()
+    for name, info in status.items():
+        if info.get("error"):
+            console.print(f"[red]✗[/red] {name.value}: {info['error']}")
+            continue
+        if info["installed"]:
+            console.print(
+                f"[green]✓[/green] {name.value} {info['release']} "
+                f"({info['variant']}) → {info['path']}"
+            )
+        else:
+            console.print(
+                f"[yellow]·[/yellow] {name.value} {info['release']} "
+                f"({info['variant']}) — not installed"
+            )
+
+
+# ──────────────────────────────────────────────
+# service (systemd user unit install/management)
+# ──────────────────────────────────────────────
+
+service_app = typer.Typer(
+    no_args_is_help=True,
+    help="Install and manage the dictum systemd user service.",
+)
+app.add_typer(service_app, name="service")
+
+
+def _user_unit_dir() -> Path:
+    """Return the systemd user unit directory, creating it if needed."""
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if base:
+        unit_dir = Path(base) / "systemd" / "user"
+    else:
+        unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    return unit_dir
+
+
+def _bundled_unit_path() -> Path:
+    """Return the path to the unit file bundled inside the dictum package."""
+    from importlib.resources import files
+
+    p = Path(str(files("dictum").joinpath("data", "dictum.service")))
+    if not p.exists():
+        _die(
+            "Bundled unit file dictum/data/dictum.service not found. "
+            "Your dictum install may be incomplete."
+        )
+    return p
+
+
+def _run_systemctl(*args: str) -> tuple[int, str, str]:
+    """Run `systemctl --user <args>`; return (rc, stdout, stderr)."""
+    cmd = ["systemctl", "--user", *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+@service_app.command("install")
+def service_install(
+    now: Annotated[
+        bool,
+        typer.Option("--now", help="Also start the service immediately after enabling."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing unit file."),
+    ] = False,
+) -> None:
+    """Install the dictum systemd user service (enabled, not started).
+
+    Copies the bundled unit file into ~/.config/systemd/user/, runs
+    `systemctl --user daemon-reload`, and enables the unit. By default the
+    service is enabled (starts at login) but not started; pass --now to
+    start it immediately.
+
+    User units cannot start at boot — they start at graphical/login session.
+    """
+    import shutil
+
+    # Sanity-check systemctl is available before touching files.
+    if shutil.which("systemctl") is None:
+        _die("systemctl not found on PATH. systemd user services are unavailable.")
+
+    unit_dir = _user_unit_dir()
+    dest = unit_dir / "dictum.service"
+
+    if dest.exists() and not force:
+        console.print(
+            f"[yellow]·[/yellow] Unit file already exists at {dest} (use --force to overwrite)"
+        )
+    else:
+        src = _bundled_unit_path()
+        shutil.copyfile(src, dest)
+        console.print(f"[green]✓[/green] Installed unit → {dest}")
+
+    # daemon-reload
+    rc, _out, err = _run_systemctl("daemon-reload")
+    if rc != 0:
+        _die(f"systemctl --user daemon-reload failed: {err.strip()}")
+    console.print("[dim]daemon-reload done[/dim]")
+
+    # enable (do not start unless --now)
+    enable_args = ["enable"]
+    if now:
+        enable_args.append("--now")
+    rc, out, err = _run_systemctl(*enable_args, "dictum.service")
+    if rc != 0:
+        _die(f"systemctl --user enable failed: {err.strip() or out.strip()}")
+    if now:
+        console.print("[green]✓[/green] dictum.service enabled and started")
+    else:
+        console.print("[green]✓[/green] dictum.service enabled (will start at next login)")
+        console.print("[dim]  Start now with: systemctl --user start dictum[/dim]")
+
+
+@service_app.command("uninstall")
+def service_uninstall() -> None:
+    """Disable and remove the dictum systemd user service."""
+    import shutil
+
+    if shutil.which("systemctl") is None:
+        _die("systemctl not found on PATH.")
+
+    # disable (no-op if not enabled)
+    rc, _out, _err = _run_systemctl("disable", "dictum.service")
+    if rc != 0:
+        # Not enabled is fine; surface other errors.
+        if "not loaded" not in _err and "No such file" not in _err:
+            _die(f"systemctl --user disable failed: {_err.strip()}")
+        console.print("[dim]·[/dim] dictum.service was not enabled")
+    else:
+        console.print("[green]✓[/green] dictum.service disabled")
+
+    unit_path = _user_unit_dir() / "dictum.service"
+    if unit_path.exists():
+        unit_path.unlink()
+        console.print(f"[green]✓[/green] Removed {unit_path}")
+    else:
+        console.print("[dim]·[/dim] No unit file to remove")
+
+    rc, _out, err = _run_systemctl("daemon-reload")
+    if rc != 0:
+        _die(f"systemctl --user daemon-reload failed: {err.strip()}")
+    console.print("[dim]daemon-reload done[/dim]")
+
+
+@service_app.command("status")
+def service_status() -> None:
+    """Show whether the dictum systemd user service is installed and running."""
+    import shutil
+
+    if shutil.which("systemctl") is None:
+        _die("systemctl not found on PATH.")
+
+    unit_path = _user_unit_dir() / "dictum.service"
+    installed = unit_path.exists()
+    console.print(
+        f"{'[green]✓[/green]' if installed else '[yellow]·[/yellow]'} "
+        f"unit file: {unit_path} "
+        f"{'(installed)' if installed else '(not installed)'}"
+    )
+
+    rc, out, err = _run_systemctl("is-enabled", "dictum.service")
+    enabled_state = out.strip() or err.strip() or "unknown"
+    if rc != 0 and enabled_state in ("disabled", "enabled", "static"):
+        # is-enabled returns rc=1 for "disabled"; treat as informational
+        pass
+    console.print(f"  enabled: {enabled_state}")
+
+    rc, out, _err = _run_systemctl("is-active", "dictum.service")
+    active_state = out.strip() or "unknown"
+    console.print(f"  active:  {active_state}")
 
 
 # ──────────────────────────────────────────────
@@ -199,21 +447,3 @@ def once(
 
 if __name__ == "__main__":
     app()
-
-
-def once_callback(
-    profile: str = "default",
-    result: str = "paste",
-    duration: int = 30,
-) -> None:
-    """Entry point for `dictum-once` / `uvx dictum-once`."""
-    # Directly call the once command function (typer decorators preserve the function)
-    once(profile=profile, result=result, duration=duration)
-
-
-def toggle_callback(
-    profile: str = "default",
-    result: str = "paste",
-) -> None:
-    """Entry point for `dictum-toggle` / `uvx dictum-toggle`."""
-    toggle(profile=profile, result=result)

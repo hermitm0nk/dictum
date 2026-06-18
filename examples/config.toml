@@ -12,7 +12,8 @@ precision = "q4_k"
 backend = "managed-local"  # managed-local, openai-compatible, none
 # Leave model_path and binary_path unset to use Dictum's defaults:
 # model_path = "$XDG_CACHE_HOME/dictum/models/Qwen3.5-4B-Q3_K_M.gguf"
-# binary_path = "<installed package>/dictum/_native/bin/llama-server"
+# binary_path = "$XDG_DATA_HOME/dictum/native/llama/b9699/llama-server"
+# (Pre-fetch with `dictum native install`, or set DICTUM_LLM_BIN to override.)
 port = 8080
 ctx_size = 4096
 n_gpu_layers = -1  # -1 = all layers on GPU

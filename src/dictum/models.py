@@ -48,18 +48,18 @@ class AsrConfig(BaseModel):
 
 class LlmConfig(BaseModel):
     backend: str = "managed-local"  # managed-local, openai-compatible, none
-    
+
     # For managed-local backend
     model_path: Path | None = None
     binary_path: Path | None = None
     port: int = 8080
     ctx_size: int = 4096
     n_gpu_layers: int = -1  # -1 = all layers on GPU
-    
+
     # For openai-compatible backend (remote or externally managed)
     base_url: HttpUrl | None = None
     model: str = "qwen3.5-4b-q3_k_m"
-    
+
     # Common
     temperature: float = 0.2
     timeout_seconds: float = 20.0

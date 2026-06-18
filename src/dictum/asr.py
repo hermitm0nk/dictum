@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from dictum.accel import native_binary
+from dictum.accel import ensure_native_binary, native_binary, native_env_for
 from dictum.backends import AsrBackend
 from dictum.models import Profile, Transcript
 from dictum.models_loader import asr_model_path, ensure_asr_model
@@ -21,6 +21,13 @@ DEFAULT_PORT = 8081
 
 def _default_binary() -> Path:
     return Path(os.environ.get("DICTUM_PARAKEET_BIN", str(native_binary("parakeet-main"))))
+
+
+def _is_managed_binary(binary: Path | None) -> bool:
+    """True if `binary` is the installer-managed default (no env override)."""
+    if binary is not None:
+        return False
+    return os.environ.get("DICTUM_PARAKEET_BIN", "").strip() == ""
 
 
 def _default_model() -> Path:
@@ -46,6 +53,7 @@ class ParakeetASR(AsrBackend):
         use_server: bool = True,
     ) -> None:
         self.binary = binary or _default_binary()
+        self._binary_managed = _is_managed_binary(binary)
         self.model = model or _default_model()
         self.port = port
         self.threads = threads
@@ -65,10 +73,13 @@ class ParakeetASR(AsrBackend):
             log.info("CrispASR server already running on port %d", self.port)
             return
 
-        if not self.binary.exists():
+        if self._binary_managed:
+            log.info("Ensuring CrispASR binary is installed …")
+            self.binary = ensure_native_binary("parakeet-main")
+        elif not self.binary.exists():
             raise FileNotFoundError(
                 f"parakeet-main binary not found at {self.binary}. "
-                "Ensure the dictum wheel was built with native artifacts."
+                "Set DICTUM_PARAKEET_BIN or run `dictum native install`."
             )
         if not self.model.exists():
             log.info("Parakeet GGUF not found, downloading...")
@@ -78,15 +89,21 @@ class ParakeetASR(AsrBackend):
 
         cmd = [
             str(self.binary),
-            "-m", str(self.model),
-            "-t", str(self.threads),
+            "-m",
+            str(self.model),
+            "-t",
+            str(self.threads),
             "--server",
-            "--port", str(self.port),
-            "--host", "127.0.0.1",
+            "--port",
+            str(self.port),
+            "--host",
+            "127.0.0.1",
         ]
 
+        env = native_env_for("parakeet-main") if self._binary_managed else None
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -149,10 +166,12 @@ class ParakeetASR(AsrBackend):
 
     async def _transcribe_cli(self, audio_path: Path) -> Transcript:
         """Transcribe via CrispASR CLI (cold start each time)."""
-        if not self.binary.exists():
+        if self._binary_managed:
+            self.binary = ensure_native_binary("parakeet-main")
+        elif not self.binary.exists():
             raise FileNotFoundError(
                 f"parakeet-main binary not found at {self.binary}. "
-                "Ensure the dictum wheel was built with native artifacts."
+                "Set DICTUM_PARAKEET_BIN or run `dictum native install`."
             )
         if not self.model.exists():
             log.info("Parakeet GGUF not found, downloading...")
@@ -160,14 +179,18 @@ class ParakeetASR(AsrBackend):
 
         cmd = [
             str(self.binary),
-            "-m", str(self.model),
-            "-t", str(self.threads),
+            "-m",
+            str(self.model),
+            "-t",
+            str(self.threads),
             str(audio_path),
         ]
 
         log.info("ASR running: %s", " ".join(cmd))
+        env = native_env_for("parakeet-main") if self._binary_managed else None
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -188,8 +211,11 @@ def create_asr_backend(profile: Profile, use_server: bool = True) -> AsrBackend:
     backend_name = asr_cfg.backend.lower() if asr_cfg else "parakeet"
 
     if backend_name == "parakeet":
+        # Pass binary=None so ParakeetASR treats it as installer-managed and
+        # triggers ensure_native_binary() on first start. Passing
+        # _default_binary() explicitly would defeat the managed-binary check.
         return ParakeetASR(
-            binary=_default_binary(),
+            binary=None,
             port=DEFAULT_PORT,
             threads=4,
             use_server=use_server,
