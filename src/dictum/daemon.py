@@ -331,6 +331,8 @@ def run_daemon(profile_name: str = "default") -> None:
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
         stream=sys.stderr,
     )
-    profile = Profile(name=profile_name)
+    from dictum.config import load_profile
+
+    profile = load_profile(profile_name)
     daemon = Daemon(profile=profile)
     asyncio.run(daemon.serve())

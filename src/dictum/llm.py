@@ -14,13 +14,6 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 
-_DICTATION_PROMPT = (
-    "Fix punctuation, capitalization, and remove filler words "
-    "(um, uh, like, you know, I mean) from voice transcription. "
-    "Break run-on sentences. Output only the corrected text, "
-    "no explanations or notes."
-)
-
 
 class OpenAILLM(LlmBackend):
     """Polish transcripts through an OpenAI-compatible chat endpoint."""
@@ -64,7 +57,7 @@ class OpenAILLM(LlmBackend):
         if not raw:
             return raw
 
-        system_msg = profile.prompt or _DICTATION_PROMPT
+        system_msg = profile.prompt or Profile.model_fields["prompt"].default
 
         payload: dict[str, Any] = {
             "model": self.model,

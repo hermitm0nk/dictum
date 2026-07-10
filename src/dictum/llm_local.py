@@ -160,12 +160,7 @@ class ManagedLocalLlm(LlmBackend):
         if not raw:
             return raw
 
-        system_msg = profile.prompt or (
-            "Fix punctuation, capitalization, and remove filler words "
-            "(um, uh, like, you know, I mean) from voice transcription. "
-            "Break run-on sentences. Output only the corrected text, "
-            "no explanations or notes."
-        )
+        system_msg = profile.prompt or Profile.model_fields["prompt"].default
 
         payload: dict[str, object] = {
             "model": profile.llm.model if profile.llm else "qwen3.5-4b-q3_k_m",

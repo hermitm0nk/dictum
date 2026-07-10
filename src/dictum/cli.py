@@ -398,8 +398,8 @@ def once(
     polishes, and delivers the result.
     """
     from dictum.asr import ParakeetASR
-    from dictum.llm import OpenAILLM
-    from dictum.models import DictationResult, Profile, ResultTarget
+    from dictum.config import load_profile
+    from dictum.models import DictationResult, ResultTarget
     from dictum.output import OutputSink
     from dictum.recorder import Recorder
 
@@ -425,10 +425,12 @@ def once(
     console.print(f"[green]Transcript:[/green] {transcript.text}")
 
     # Polish
-    prof = Profile(name=profile)
+    prof = load_profile(profile)
     polished: str | None = None
     if prof.llm:
-        llm = OpenAILLM()
+        from dictum.llm_local import create_llm_backend
+
+        llm = create_llm_backend(prof)
         try:
             console.print("[dim]Polishing…[/dim]")
             polished = _run(llm.polish(transcript, prof))
