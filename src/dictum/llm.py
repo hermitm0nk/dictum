@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -27,6 +28,9 @@ class OpenAILLM(LlmBackend):
         timeout: float = 120.0,
         max_tokens: int = 512,
         enable_thinking: bool = False,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.base_url = (base_url or _DEFAULT_BASE_URL).rstrip("/")
         self.model = model or "qwen3.5-4b-q3_k_m"
@@ -35,6 +39,8 @@ class OpenAILLM(LlmBackend):
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.enable_thinking = enable_thinking
+        self.api_key = api_key or (os.environ.get(api_key_env) if api_key_env else None)
+        self.extra_headers = dict(headers or {})
 
     def _url(self) -> str:
         return f"{self.base_url}/v1/chat/completions"
@@ -42,11 +48,18 @@ class OpenAILLM(LlmBackend):
     def _health_url(self) -> str:
         return f"{self.base_url}/health"
 
+    def _headers(self) -> dict[str, str]:
+        """Auth + extra headers. Never log the key itself."""
+        headers = {"Content-Type": "application/json", **self.extra_headers}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     async def check_health(self) -> bool:
         """Return True if the LLM server is reachable."""
         try:
             async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(self._health_url())
+                r = await client.get(self._health_url(), headers=self._headers())
                 return r.status_code == 200
         except (httpx.HTTPError, OSError):
             return False
@@ -78,7 +91,7 @@ class OpenAILLM(LlmBackend):
 
         log.info("LLM request to %s (model=%s)", self._url(), self.model)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            r = await client.post(self._url(), json=payload)
+            r = await client.post(self._url(), json=payload, headers=self._headers())
             r.raise_for_status()
             data = r.json()
 

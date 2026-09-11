@@ -229,6 +229,9 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
             timeout=profile.llm.timeout_seconds,
             max_tokens=profile.llm.max_tokens,
             enable_thinking=profile.llm.enable_thinking,
+            api_key=profile.llm.api_key,
+            api_key_env=profile.llm.api_key_env,
+            headers=profile.llm.headers,
         )
 
     log.warning("Unknown LLM backend: %s, falling back to openai-compatible", backend)
@@ -242,4 +245,7 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
         timeout=profile.llm.timeout_seconds,
         max_tokens=profile.llm.max_tokens,
         enable_thinking=profile.llm.enable_thinking,
+        api_key=profile.llm.api_key,
+        api_key_env=profile.llm.api_key_env,
+        headers=profile.llm.headers,
     )

@@ -59,6 +59,12 @@ class LlmConfig(BaseModel):
     # For openai-compatible backend (remote or externally managed)
     base_url: HttpUrl | None = None
     model: str = "qwen3.5-4b-q3_k_m"
+    # Auth: prefer api_key_env (secret stays out of the config file);
+    # raw api_key is supported but discouraged in shared/dotfiles repos.
+    api_key: str | None = None
+    api_key_env: str | None = None  # e.g. "OPENROUTER_API_KEY"
+    # Extra HTTP headers (e.g. OpenRouter's HTTP-Referer / X-Title).
+    headers: dict[str, str] = Field(default_factory=dict)
 
     # Common
     temperature: float = 0.2
