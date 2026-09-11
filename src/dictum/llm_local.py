@@ -61,8 +61,10 @@ class ManagedLocalLlm(LlmBackend):
         ctx_size: int = 4096,
         n_gpu_layers: int = -1,
         temperature: float = 0.2,
+        top_p: float | None = None,
         timeout: float = 20.0,
         max_tokens: int = 512,
+        enable_thinking: bool = False,
     ) -> None:
         self.model_path = model_path or _default_model()
         self.binary_path = binary_path or _default_binary()
@@ -71,8 +73,10 @@ class ManagedLocalLlm(LlmBackend):
         self.ctx_size = ctx_size
         self.n_gpu_layers = n_gpu_layers
         self.temperature = temperature
+        self.top_p = top_p
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.enable_thinking = enable_thinking
 
         self._proc: asyncio.subprocess.Process | None = None
         self._base_url = f"http://127.0.0.1:{port}"
@@ -170,8 +174,10 @@ class ManagedLocalLlm(LlmBackend):
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
 
         log.info("LLM request to %s", self._chat_url)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -206,7 +212,10 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
             ctx_size=profile.llm.ctx_size,
             n_gpu_layers=profile.llm.n_gpu_layers,
             temperature=profile.llm.temperature,
+            top_p=profile.llm.top_p,
             timeout=profile.llm.timeout_seconds,
+            max_tokens=profile.llm.max_tokens,
+            enable_thinking=profile.llm.enable_thinking,
         )
 
     if backend == "openai-compatible":
@@ -216,7 +225,10 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
             base_url=str(profile.llm.base_url) if profile.llm.base_url else "http://127.0.0.1:8080",
             model=profile.llm.model,
             temperature=profile.llm.temperature,
+            top_p=profile.llm.top_p,
             timeout=profile.llm.timeout_seconds,
+            max_tokens=profile.llm.max_tokens,
+            enable_thinking=profile.llm.enable_thinking,
         )
 
     log.warning("Unknown LLM backend: %s, falling back to openai-compatible", backend)
@@ -226,5 +238,8 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
         base_url=str(profile.llm.base_url) if profile.llm.base_url else "http://127.0.0.1:8080",
         model=profile.llm.model,
         temperature=profile.llm.temperature,
+        top_p=profile.llm.top_p,
         timeout=profile.llm.timeout_seconds,
+        max_tokens=profile.llm.max_tokens,
+        enable_thinking=profile.llm.enable_thinking,
     )

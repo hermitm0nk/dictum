@@ -98,6 +98,39 @@ temperature = 0.5
     assert profile.llm.temperature == 0.5
 
 
+def test_load_profile_llm_sampling_params(config_dir: Path) -> None:
+    """Parses sampling params; defaults preserve Qwen3.5 behavior."""
+    _write_config(
+        config_dir,
+        """
+[profiles.default]
+[profiles.default.llm]
+backend = "managed-local"
+temperature = 1.0
+top_p = 0.95
+max_tokens = 2048
+enable_thinking = true
+""",
+    )
+    profile = load_profile("default")
+    assert profile.llm is not None
+    assert profile.llm.temperature == 1.0
+    assert profile.llm.top_p == 0.95
+    assert profile.llm.max_tokens == 2048
+    assert profile.llm.enable_thinking is True
+
+
+def test_llm_config_sampling_defaults() -> None:
+    """Defaults keep previous behavior: no top_p, 512 tokens, no thinking."""
+    from dictum.models import LlmConfig
+
+    llm = LlmConfig()
+    assert llm.temperature == 0.2
+    assert llm.top_p is None
+    assert llm.max_tokens == 512
+    assert llm.enable_thinking is False
+
+
 def test_load_profile_llm_disabled(config_dir: Path) -> None:
     """Supports backend = 'none' to disable LLM."""
     _write_config(

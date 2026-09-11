@@ -62,6 +62,9 @@ class LlmConfig(BaseModel):
 
     # Common
     temperature: float = 0.2
+    top_p: float | None = None  # None = leave unset, use server default
+    max_tokens: int = 512
+    enable_thinking: bool = False  # Qwen-style thinking toggle; MiniCPM5-2B needs True
     timeout_seconds: float = 20.0
 
 

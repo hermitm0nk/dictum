@@ -23,14 +23,18 @@ class OpenAILLM(LlmBackend):
         base_url: str | None = None,
         model: str | None = None,
         temperature: float = 0.2,
+        top_p: float | None = None,
         timeout: float = 120.0,
         max_tokens: int = 512,
+        enable_thinking: bool = False,
     ) -> None:
         self.base_url = (base_url or _DEFAULT_BASE_URL).rstrip("/")
         self.model = model or "qwen3.5-4b-q3_k_m"
         self.temperature = temperature
+        self.top_p = top_p
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.enable_thinking = enable_thinking
 
     def _url(self) -> str:
         return f"{self.base_url}/v1/chat/completions"
@@ -67,8 +71,10 @@ class OpenAILLM(LlmBackend):
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
 
         log.info("LLM request to %s (model=%s)", self._url(), self.model)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
