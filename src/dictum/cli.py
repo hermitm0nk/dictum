@@ -441,7 +441,7 @@ def once(
     # Output
     target = ResultTarget(result)
     dr = DictationResult(transcript=transcript, polished_text=polished, target=target)
-    _run(OutputSink().deliver(dr, target))
+    _run(OutputSink().deliver(dr, target, prof))
 
     if target == ResultTarget.STDOUT:
         print(dr.final_text)

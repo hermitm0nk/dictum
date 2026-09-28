@@ -7,7 +7,7 @@ import os
 import tomllib
 from pathlib import Path
 
-from dictum.models import AsrConfig, LlmConfig, Profile, ResultTarget
+from dictum.models import AsrConfig, LlmConfig, OutputConfig, Profile, ResultTarget
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,10 @@ def _profile_from_section(name: str, section: dict) -> Profile:  # type: ignore[
 
     if "result" in section:
         kwargs["result"] = ResultTarget(section["result"])
+
+    # Nested output config (paste method)
+    if "output" in section:
+        kwargs["output"] = OutputConfig(**section["output"])
 
     # prompt_file: read the file contents into prompt, or pass the path
     if "prompt_file" in section:

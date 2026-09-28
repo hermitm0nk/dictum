@@ -14,6 +14,18 @@ class ResultTarget(StrEnum):
     NONE = "none"
 
 
+class PasteMethod(StrEnum):
+    """How PASTE targets deliver text to the focused window."""
+
+    TYPE = "type"  # keystroke-type via wtype/ydotool (best for native Wayland)
+    CLIPBOARD = "clipboard"  # wl-copy + synthetic Ctrl+V (best for XWayland)
+    AUTO = "auto"  # clipboard for XWayland windows, typing otherwise
+
+
+class OutputConfig(BaseModel):
+    paste_method: PasteMethod = PasteMethod.AUTO
+
+
 class Transcript(BaseModel):
     text: str
     language: str | None = None
@@ -96,5 +108,6 @@ class Profile(BaseModel):
     )
     prompt_file: Path | None = None
     result: ResultTarget = ResultTarget.PASTE
+    output: OutputConfig = Field(default_factory=OutputConfig)
     asr: AsrConfig = Field(default_factory=AsrConfig)
     llm: LlmConfig | None = Field(default_factory=LlmConfig)

@@ -129,10 +129,10 @@ class Daemon:
             log.warning("LLM polish failed, using raw transcript: %s", exc)
             return None
 
-    async def _deliver(self, result: DictationResult) -> None:
+    async def _deliver(self, result: DictationResult, profile: Profile) -> None:
         """Output the result."""
         self._set(DictumState.PASTING)
-        await self.output.deliver(result, result.target)
+        await self.output.deliver(result, result.target, profile)
 
     async def _process_audio(
         self, audio_path: Path, profile: Profile, target: ResultTarget
@@ -146,7 +146,7 @@ class Daemon:
                 polished_text=polished,
                 target=target,
             )
-            await self._deliver(result)
+            await self._deliver(result, profile)
             self._set(DictumState.IDLE)
             self.last_result = result
             return result
