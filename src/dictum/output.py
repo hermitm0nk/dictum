@@ -14,10 +14,14 @@ log = logging.getLogger(__name__)
 
 # Delay after wl-copy so the compositor (and the XWayland clipboard proxy)
 # picks up the new content before the synthetic Ctrl+V is sent.
-CLIPBOARD_SETTLE_SECONDS = 0.15
+CLIPBOARD_SETTLE_SECONDS = 0.3
 # Delay before restoring the previous clipboard so the target app has
 # time to read the pasted content after the keypress.
 CLIPBOARD_RESTORE_SECONDS = 0.5
+
+# Linux input keycodes for Ctrl+V (see input-event-codes.h).
+_KEY_LEFTCTRL = 29
+_KEY_V = 47
 
 
 async def _run(cmd: list[str], input_data: bytes | None = None) -> str:
@@ -153,17 +157,22 @@ class OutputSink:
             await self._clipboard(text)
 
     async def _clipboard_paste(self, text: str) -> None:
-        """Copy text and send Ctrl+V so the app pastes it as one unit."""
-        if not (_has_binary("wl-copy") and _has_binary("wtype")):
-            log.warning("wl-copy+wtype needed for clipboard paste, falling back to typing")
+        """Copy text and send Ctrl+V so the app pastes it as one unit.
+
+        The paste keystroke goes via ydotool (kernel-level, identical to a
+        physical keyboard) when available: wtype's virtual-keyboard events
+        do not survive translation into XWayland clients, so Ctrl+V sent
+        with wtype silently does nothing there. wtype is kept as fallback.
+        """
+        if not (_has_binary("wl-copy") and (_has_binary("ydotool") or _has_binary("wtype"))):
+            log.warning("wl-copy plus ydotool/wtype needed for clipboard paste")
             await self._type(text)
             return
         saved = await self._read_clipboard()
         await _run_feed(["wl-copy"], text.encode())
         await asyncio.sleep(CLIPBOARD_SETTLE_SECONDS)
         try:
-            log.info("Pasting via clipboard + Ctrl+V")
-            await _run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"])
+            await self._send_paste_key()
         finally:
             if saved is not None:
                 await asyncio.sleep(CLIPBOARD_RESTORE_SECONDS)
@@ -173,6 +182,30 @@ class OutputSink:
                     log.warning("Could not restore clipboard: %s", exc)
             # saved is None (unreadable clipboard): leave the pasted text
             # in place so the user can paste again.
+
+    async def _send_paste_key(self) -> None:
+        """Send Ctrl+V, preferring ydotool over wtype (see above)."""
+        if _has_binary("ydotool"):
+            try:
+                log.info("Pasting via clipboard + Ctrl+V (ydotool)")
+                await _run(
+                    [
+                        "ydotool",
+                        "key",
+                        f"{_KEY_LEFTCTRL}:1",
+                        f"{_KEY_V}:1",
+                        f"{_KEY_V}:0",
+                        f"{_KEY_LEFTCTRL}:0",
+                    ]
+                )
+                return
+            except Exception as exc:
+                log.warning("ydotool paste failed, trying wtype: %s", exc)
+        if _has_binary("wtype"):
+            log.info("Pasting via clipboard + Ctrl+V (wtype)")
+            await _run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"])
+        else:
+            log.warning("No ydotool or wtype for paste keypress")
 
     async def _read_clipboard(self) -> str | None:
         """Best-effort read of the current clipboard. None when unavailable."""

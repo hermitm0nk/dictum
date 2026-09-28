@@ -54,6 +54,26 @@ def test_clipboard_method_copies_and_sends_ctrl_v(monkeypatch) -> None:
     profile.output.paste_method = PasteMethod.CLIPBOARD
     _run(OutputSink().deliver(_result(), ResultTarget.PASTE, profile))
     assert feeds == [(["wl-copy"], b"hello")]
+    assert runs == [["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]]
+
+
+def test_clipboard_paste_key_falls_back_to_wtype(monkeypatch) -> None:
+    runs: list[list[str]] = []
+
+    async def fake_run(cmd: list[str], input_data: bytes | None = None) -> str:
+        runs.append(cmd)
+        return ""
+
+    async def fake_feed(cmd: list[str], input_data: bytes) -> None:
+        return None
+
+    # ydotool missing, wtype present -> wtype sends Ctrl+V.
+    monkeypatch.setattr(output_mod, "_run", fake_run)
+    monkeypatch.setattr(output_mod, "_run_feed", fake_feed)
+    monkeypatch.setattr(output_mod, "_has_binary", lambda name: name != "ydotool")
+    monkeypatch.setattr(OutputSink, "_read_clipboard", lambda self: _immediate(None))
+    monkeypatch.setattr(output_mod.asyncio, "sleep", _no_sleep())
+    _run(OutputSink()._clipboard_paste("hello"))
     assert runs == [["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"]]
 
 
@@ -79,7 +99,7 @@ def test_auto_routes_xwayland_to_clipboard(monkeypatch) -> None:
     monkeypatch.setattr(output_mod.asyncio, "sleep", _no_sleep())
     _run(OutputSink().deliver(_result(), ResultTarget.PASTE, Profile()))
     assert feeds == [(["wl-copy"], b"hello")]
-    assert ["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"] in runs
+    assert ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"] in runs
 
 
 def test_auto_routes_native_wayland_to_typing(monkeypatch) -> None:
