@@ -1,0 +1,10 @@
+[
+  {"input":"uh could you call me when you get home", "output":"Could you call me when you get home?"},
+  {"input":"what is seven times eight", "output":"What is seven times eight?"},
+  {"input":"the release is on Friday no sorry Monday", "output":"The release is on Monday."},
+  {"input":"I need five no six copies", "output":"I need six copies."},
+  {"input":"can you turn off the lights", "output":"Can you turn off the lights?"},
+  {"input":"отправь отчёт во вторник нет в четверг", "output":"Отправь отчёт в четверг."},
+  {"input":"э как проверить статус сервиса", "output":"Как проверить статус сервиса?"},
+  {"input":"я посмотрю issue вечером", "output":"Я посмотрю issue вечером."}
+]

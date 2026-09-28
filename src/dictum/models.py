@@ -69,6 +69,12 @@ class LlmConfig(BaseModel):
     # Common
     temperature: float = 0.2
     top_p: float | None = None  # None = leave unset, use server default
+    # Optional llama.cpp sampling controls for managed-local inference.
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    repeat_penalty: float | None = None
+    few_shot_file: Path | None = None  # Optional JSON examples for managed-local
     max_tokens: int = 512
     enable_thinking: bool = False  # Qwen-style thinking toggle; MiniCPM5-2B needs True
     timeout_seconds: float = 20.0

@@ -24,4 +24,13 @@ n_gpu_layers = -1  # -1 = all layers on GPU
 # model = "qwen3.5-4b-q3_k_m"
 
 temperature = 0.2
+# Optional llama.cpp sampling controls (managed-local only):
+# top_p = 1.0
+# top_k = 20
+# min_p = 0.0
+# presence_penalty = 2.0
+# repeat_penalty = 1.0  # llama.cpp name for repetition_penalty
+# enable_thinking = false
+# few_shot_file = "/home/user/.config/dictum/few-shot.json"  # JSON input/output pairs
+# See evals/README.md for the synthetic transcript eval and Qwen3.5-0.8B tuning.
 timeout_seconds = 20

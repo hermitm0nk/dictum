@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -62,6 +63,11 @@ class ManagedLocalLlm(LlmBackend):
         n_gpu_layers: int = -1,
         temperature: float = 0.2,
         top_p: float | None = None,
+        top_k: int | None = None,
+        min_p: float | None = None,
+        presence_penalty: float | None = None,
+        repeat_penalty: float | None = None,
+        few_shot_file: Path | None = None,
         timeout: float = 20.0,
         max_tokens: int = 512,
         enable_thinking: bool = False,
@@ -74,6 +80,21 @@ class ManagedLocalLlm(LlmBackend):
         self.n_gpu_layers = n_gpu_layers
         self.temperature = temperature
         self.top_p = top_p
+        self.top_k = top_k
+        self.min_p = min_p
+        self.presence_penalty = presence_penalty
+        self.repeat_penalty = repeat_penalty
+        self.examples: list[dict[str, str]] = []
+        if few_shot_file is not None:
+            examples = json.loads(few_shot_file.read_text(encoding="utf-8"))
+            if not isinstance(examples, list) or not all(
+                isinstance(e, dict)
+                and isinstance(e.get("input"), str)
+                and isinstance(e.get("output"), str)
+                for e in examples
+            ):
+                raise ValueError(f"Invalid examples in {few_shot_file}")
+            self.examples = examples
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.enable_thinking = enable_thinking
@@ -170,7 +191,15 @@ class ManagedLocalLlm(LlmBackend):
             "model": profile.llm.model if profile.llm else "qwen3.5-4b-q3_k_m",
             "messages": [
                 {"role": "system", "content": system_msg},
-                {"role": "user", "content": raw},
+                *[
+                    message
+                    for example in self.examples
+                    for message in (
+                        {"role": "user", "content": "Transcript: " + example["input"]},
+                        {"role": "assistant", "content": example["output"]},
+                    )
+                ],
+                {"role": "user", "content": ("Transcript: " if self.examples else "") + raw},
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -178,6 +207,14 @@ class ManagedLocalLlm(LlmBackend):
         }
         if self.top_p is not None:
             payload["top_p"] = self.top_p
+        if self.top_k is not None:
+            payload["top_k"] = self.top_k
+        if self.min_p is not None:
+            payload["min_p"] = self.min_p
+        if self.presence_penalty is not None:
+            payload["presence_penalty"] = self.presence_penalty
+        if self.repeat_penalty is not None:
+            payload["repeat_penalty"] = self.repeat_penalty
 
         log.info("LLM request to %s", self._chat_url)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -213,6 +250,11 @@ def create_llm_backend(profile: Profile) -> LlmBackend:
             n_gpu_layers=profile.llm.n_gpu_layers,
             temperature=profile.llm.temperature,
             top_p=profile.llm.top_p,
+            top_k=profile.llm.top_k,
+            min_p=profile.llm.min_p,
+            presence_penalty=profile.llm.presence_penalty,
+            repeat_penalty=profile.llm.repeat_penalty,
+            few_shot_file=profile.llm.few_shot_file,
             timeout=profile.llm.timeout_seconds,
             max_tokens=profile.llm.max_tokens,
             enable_thinking=profile.llm.enable_thinking,
