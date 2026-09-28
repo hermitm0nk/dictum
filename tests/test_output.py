@@ -35,41 +35,51 @@ def test_type_method_uses_wtype(monkeypatch) -> None:
 
 
 def test_clipboard_method_copies_and_sends_ctrl_v(monkeypatch) -> None:
-    calls: list[tuple[list[str], bytes | None]] = []
+    runs: list[list[str]] = []
+    feeds: list[tuple[list[str], bytes]] = []
 
     async def fake_run(cmd: list[str], input_data: bytes | None = None) -> str:
-        calls.append((cmd, input_data))
+        runs.append(cmd)
         return ""
 
+    async def fake_feed(cmd: list[str], input_data: bytes) -> None:
+        feeds.append((cmd, input_data))
+
     monkeypatch.setattr(output_mod, "_run", fake_run)
+    monkeypatch.setattr(output_mod, "_run_feed", fake_feed)
     monkeypatch.setattr(output_mod, "_has_binary", lambda name: True)
     monkeypatch.setattr(OutputSink, "_read_clipboard", lambda self: _immediate(None))
     monkeypatch.setattr(output_mod.asyncio, "sleep", _no_sleep())
     profile = Profile()
     profile.output.paste_method = PasteMethod.CLIPBOARD
     _run(OutputSink().deliver(_result(), ResultTarget.PASTE, profile))
-    assert calls[0] == (["wl-copy"], b"hello")
-    assert calls[1][0] == ["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"]
+    assert feeds == [(["wl-copy"], b"hello")]
+    assert runs == [["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"]]
 
 
 def test_auto_routes_xwayland_to_clipboard(monkeypatch) -> None:
-    calls: list[list[str]] = []
+    runs: list[list[str]] = []
+    feeds: list[tuple[list[str], bytes]] = []
 
     async def fake_run(cmd: list[str], input_data: bytes | None = None) -> str:
-        calls.append(cmd)
+        runs.append(cmd)
         return ""
+
+    async def fake_feed(cmd: list[str], input_data: bytes) -> None:
+        feeds.append((cmd, input_data))
 
     async def fake_xwayland() -> bool:
         return True
 
     monkeypatch.setattr(output_mod, "_run", fake_run)
+    monkeypatch.setattr(output_mod, "_run_feed", fake_feed)
     monkeypatch.setattr(output_mod, "_has_binary", lambda name: True)
     monkeypatch.setattr(output_mod, "focused_window_is_xwayland", fake_xwayland)
     monkeypatch.setattr(OutputSink, "_read_clipboard", lambda self: _immediate(None))
     monkeypatch.setattr(output_mod.asyncio, "sleep", _no_sleep())
     _run(OutputSink().deliver(_result(), ResultTarget.PASTE, Profile()))
-    assert ["wl-copy"] in calls
-    assert ["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"] in calls
+    assert feeds == [(["wl-copy"], b"hello")]
+    assert ["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"] in runs
 
 
 def test_auto_routes_native_wayland_to_typing(monkeypatch) -> None:
@@ -90,14 +100,17 @@ def test_auto_routes_native_wayland_to_typing(monkeypatch) -> None:
 
 
 def test_clipboard_paste_restores_previous_clipboard(monkeypatch) -> None:
-    copied: list[bytes | None] = []
+    copied: list[bytes] = []
 
-    async def fake_run(cmd: list[str], input_data: bytes | None = None) -> str:
+    async def fake_feed(cmd: list[str], input_data: bytes) -> None:
         if cmd == ["wl-copy"]:
             copied.append(input_data)
+
+    async def fake_run(cmd: list[str], input_data: bytes | None = None) -> str:
         return ""
 
     monkeypatch.setattr(output_mod, "_run", fake_run)
+    monkeypatch.setattr(output_mod, "_run_feed", fake_feed)
     monkeypatch.setattr(output_mod, "_has_binary", lambda name: True)
     monkeypatch.setattr(OutputSink, "_read_clipboard", lambda self: _immediate("old"))
     monkeypatch.setattr(output_mod.asyncio, "sleep", _no_sleep())
@@ -124,6 +137,63 @@ def _immediate(value):
         return value
 
     return _get()
+
+
+def test_run_feed_detaches_outputs(monkeypatch) -> None:
+    """wl-copy must not be awaited on piped outputs: it daemonizes and
+    holds inherited fds open, hanging communicate() until timeout."""
+    seen: dict = {}
+
+    class FakeProc:
+        returncode = 0
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            seen["input"] = input
+            return (b"", b"")
+
+    async def fake_exec(*cmd: str, **kwargs):
+        seen.update(kwargs)
+        seen["cmd"] = list(cmd)
+        return FakeProc()
+
+    monkeypatch.setattr(output_mod.asyncio, "create_subprocess_exec", fake_exec)
+    _run(output_mod._run_feed(["wl-copy"], b"hi"))
+    assert seen["cmd"] == ["wl-copy"]
+    assert seen["input"] == b"hi"
+    assert seen["stdout"] == output_mod.asyncio.subprocess.DEVNULL
+    assert seen["stderr"] == output_mod.asyncio.subprocess.DEVNULL
+
+
+def test_run_feed_reports_timeout(monkeypatch) -> None:
+    class HangingProc:
+        returncode = None
+        killed = False
+
+        async def communicate(self, input: bytes | None = None):
+            raise AssertionError("should be cancelled by wait_for")
+
+        def kill(self) -> None:
+            self.killed = True
+
+    proc = HangingProc()
+
+    async def fake_exec(*cmd: str, **kwargs):
+        return proc
+
+    async def fake_wait_for(awaitable, timeout: float):
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise output_mod.asyncio.TimeoutError()
+
+    monkeypatch.setattr(output_mod.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(output_mod.asyncio, "wait_for", fake_wait_for)
+    try:
+        _run(output_mod._run_feed(["wl-copy"], b"hi"))
+    except RuntimeError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+    assert proc.killed
 
 
 def _no_sleep():

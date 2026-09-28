@@ -151,7 +151,8 @@ class Daemon:
             self.last_result = result
             return result
         except Exception as exc:
-            self._set(DictumState.FAILED, str(exc))
+            err = str(exc) or type(exc).__name__
+            self._set(DictumState.FAILED, err)
             raise
 
     async def _record_and_process(self, profile: Profile, target: ResultTarget) -> DictationResult:

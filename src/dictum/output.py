@@ -35,6 +35,33 @@ async def _run(cmd: list[str], input_data: bytes | None = None) -> str:
     return stdout.decode(errors="replace").strip()
 
 
+async def _run_feed(cmd: list[str], input_data: bytes) -> None:
+    """Feed stdin to a command that daemonizes (wl-copy) and wait for handoff.
+
+    wl-copy forks to the background to serve the clipboard while holding
+    inherited fds open, so waiting on piped stdout/stderr via communicate()
+    hangs until timeout even though the copy succeeded. Redirect outputs to
+    DEVNULL and only wait for the parent, which exits once the copy is
+    handed to the compositor. Raises on non-zero exit or timeout.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(input=input_data), timeout=10)
+    except TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        raise RuntimeError(f"{' '.join(cmd)} timed out") from None
+    if proc.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)} failed with exit {proc.returncode}")
+
+
 def _has_binary(name: str) -> bool:
     try:
         return shutil.which(name) is not None
@@ -132,7 +159,7 @@ class OutputSink:
             await self._type(text)
             return
         saved = await self._read_clipboard()
-        await _run(["wl-copy"], input_data=text.encode())
+        await _run_feed(["wl-copy"], text.encode())
         await asyncio.sleep(CLIPBOARD_SETTLE_SECONDS)
         try:
             log.info("Pasting via clipboard + Ctrl+V")
@@ -141,7 +168,7 @@ class OutputSink:
             if saved is not None:
                 await asyncio.sleep(CLIPBOARD_RESTORE_SECONDS)
                 try:
-                    await _run(["wl-copy"], input_data=saved.encode())
+                    await _run_feed(["wl-copy"], saved.encode())
                 except Exception as exc:
                     log.warning("Could not restore clipboard: %s", exc)
             # saved is None (unreadable clipboard): leave the pasted text
@@ -176,4 +203,4 @@ class OutputSink:
 
     async def _clipboard(self, text: str) -> None:
         log.info("Copying to clipboard via wl-copy")
-        await _run(["wl-copy"], input_data=text.encode())
+        await _run_feed(["wl-copy"], text.encode())
