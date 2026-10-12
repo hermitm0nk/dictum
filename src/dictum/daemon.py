@@ -8,13 +8,14 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from dictum.asr import create_asr_backend
 from dictum.backends import AsrBackend, LlmBackend
 from dictum.ipc import SOCKET_PATH, ensure_socket_dir, json_response
-from dictum.llm_local import create_llm_backend
+from dictum.llm_local import create_llm_backend, polish_enabled
 from dictum.models import (
     DictationResult,
     Profile,
@@ -44,6 +45,7 @@ class Daemon:
         self.llm: LlmBackend = create_llm_backend(self.active_profile)
         self.output = OutputSink()
         self.notifier = Notifier()
+        self._notification_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # state helpers
@@ -60,6 +62,12 @@ class Daemon:
 
     async def _notify_state(self, s: DictumState, err: str | None = None) -> None:
         """Send desktop notification — one at a time, dismissed on idle."""
+        async with self._notification_lock:
+            if s != self.state or err != self.last_error:
+                return
+            await self._show_state_notification(s, err)
+
+    async def _show_state_notification(self, s: DictumState, err: str | None = None) -> None:
         if s == DictumState.IDLE:
             await self.notifier.close()
         elif s == DictumState.RECORDING:
@@ -71,15 +79,15 @@ class Daemon:
                 "📝 Transcribing",
                 "Converting speech to text…",
                 icon="accessories-text-editor",
-                timeout=3000,
+                timeout=0,
             )
         elif s == DictumState.POLISHING:
             await self.notifier.notify(
-                "✨ Polishing", "Improving with LLM…", icon="edit-find-replace", timeout=3000
+                "✨ Polishing", "Improving with LLM…", icon="edit-find-replace", timeout=0
             )
         elif s == DictumState.PASTING:
             await self.notifier.notify(
-                "📋 Pasting", "Sending to clipboard…", icon="edit-paste", timeout=2000
+                "📋 Pasting", "Sending to clipboard…", icon="edit-paste", timeout=0
             )
         elif s == DictumState.FAILED:
             await self.notifier.notify(
@@ -116,11 +124,15 @@ class Daemon:
     async def _transcribe(self, audio_path: Path) -> Transcript:
         """Transcribe audio file, return Transcript."""
         self._set(DictumState.TRANSCRIBING)
-        return await self.asr.transcribe(audio_path, self.active_profile)
+        started = time.perf_counter()
+        try:
+            return await self.asr.transcribe(audio_path, self.active_profile)
+        finally:
+            log.info("Pipeline timing asr=%.3fs", time.perf_counter() - started)
 
     async def _polish(self, transcript: Transcript, profile: Profile) -> str | None:
-        """Polish transcript with LLM. Returns None on failure."""
-        if not profile.llm:
+        """Polish transcript with LLM. Returns None when polishing is disabled."""
+        if not polish_enabled(profile):
             return None
         try:
             self._set(DictumState.POLISHING)
@@ -132,7 +144,11 @@ class Daemon:
     async def _deliver(self, result: DictationResult, profile: Profile) -> None:
         """Output the result."""
         self._set(DictumState.PASTING)
-        await self.output.deliver(result, result.target, profile)
+        started = time.perf_counter()
+        try:
+            await self.output.deliver(result, result.target, profile)
+        finally:
+            log.info("Pipeline timing output=%.3fs", time.perf_counter() - started)
 
     async def _process_audio(
         self, audio_path: Path, profile: Profile, target: ResultTarget

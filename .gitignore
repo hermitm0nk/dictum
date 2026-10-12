@@ -13,9 +13,11 @@ build/
 *.flac
 *.mp3
 *.ogg
+*.opus
 recordings/
 transcripts/
 
 # Secrets and local config
 .env
+.env.*
 config.local.toml

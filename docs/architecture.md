@@ -130,6 +130,14 @@ in `--server` mode (HTTP on port 8081) for warm latency. Users can pre-fetch it
 with `dictum native install`, or override the path entirely with
 `DICTUM_PARAKEET_BIN`.
 
+A second backend, `gemini`, targets machines without a local model: Dictum
+Opus-compresses the recording with ffmpeg, sends clips up to 128 KiB inline to
+the `gemini-3.5-transcribe` Interactions API, and uses the Files API for larger
+clips. Larger remote files are deleted after transcription. The daemon reuses
+its HTTP connection pool across dictations.
+It keeps the same `AsrBackend` interface, so a profile switches engines with a
+single config key. See `examples/config-gemini.toml`.
+
 The first worker protocol can be simple: the daemon writes a recorded audio file
 and invokes or requests transcription from the configured ASR worker. Later
 optimizations can add streaming audio, persistent worker sockets, or framework

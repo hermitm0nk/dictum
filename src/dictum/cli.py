@@ -395,13 +395,17 @@ def once(
     """Run one dictation job in the current process (no daemon needed).
 
     Records for up to DURATION seconds or until silence, transcribes,
-    polishes, and delivers the result.
+    polishes, and delivers the result. The ASR backend comes from the
+    profile, so a hosted (Gemini) profile works here too.
     """
-    from dictum.asr import ParakeetASR
+    from dictum.asr import create_asr_backend
     from dictum.config import load_profile
-    from dictum.models import DictationResult, ResultTarget
+    from dictum.llm_local import create_llm_backend, polish_enabled
+    from dictum.models import DictationResult, ResultTarget, Transcript
     from dictum.output import OutputSink
     from dictum.recorder import Recorder
+
+    prof = load_profile(profile)
 
     console.print("[dim]Recording… (speak, then wait for silence)[/dim]")
 
@@ -418,18 +422,25 @@ def once(
     audio_path = rec.stop()
     console.print(f"[dim]Saved {audio_path.stat().st_size} bytes[/dim]")
 
-    # Transcribe
+    # Transcribe with the profile's ASR backend. `use_server=False` keeps the
+    # one-shot path standalone: local Parakeet runs as a CLI invocation and
+    # never attaches to (or starts) the daemon's warm server.
+    asr = create_asr_backend(prof, use_server=False)
+
+    async def _transcribe_once() -> Transcript:
+        await asr.start()
+        try:
+            return await asr.transcribe(audio_path, prof)
+        finally:
+            await asr.stop()
+
     console.print("[dim]Transcribing…[/dim]")
-    asr = ParakeetASR()
-    transcript = _run(asr.transcribe(audio_path))
+    transcript = _run(_transcribe_once())
     console.print(f"[green]Transcript:[/green] {transcript.text}")
 
-    # Polish
-    prof = load_profile(profile)
+    # Polish (skipped when the profile disables the LLM, e.g. backend = "none")
     polished: str | None = None
-    if prof.llm:
-        from dictum.llm_local import create_llm_backend
-
+    if polish_enabled(prof):
         llm = create_llm_backend(prof)
         try:
             console.print("[dim]Polishing…[/dim]")

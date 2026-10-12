@@ -57,6 +57,21 @@ class AsrConfig(BaseModel):
     device: str = "cpu"
     precision: str = "q4_k"
 
+    # ── "gemini" backend (hosted, non-live file transcription) ──
+    # These are only read by dictum.asr_gemini.GeminiASR; `model` above stays
+    # the local Parakeet model name so switching backend never forwards it to
+    # a hosted API.
+    gemini_model: str = "gemini-3.5-transcribe"
+    gemini_api_key_env: str = "GEMINI_API_KEY"  # env var holding the key, never the key
+    gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    # mono Opus upload bitrate; Opus tops out at 510 kbps and 24-32 suits speech
+    gemini_bitrate_kbps: int = Field(default=32, gt=0, le=510)
+    gemini_transcription_mode: str = "smart"  # "smart" (rewritten) or "verbatim"
+    gemini_language_codes: list[str] = Field(default_factory=list)  # e.g. ["en-US"]
+    gemini_ffmpeg_path: str = "ffmpeg"  # needs an Opus encoder (libopus)
+    gemini_timeout_seconds: float = Field(default=120.0, gt=0)  # upload budget for slow links
+    gemini_inline_max_bytes: int = Field(default=128 * 1024, ge=0)  # 0 forces Files API
+
 
 class LlmConfig(BaseModel):
     backend: str = "managed-local"  # managed-local, openai-compatible, none

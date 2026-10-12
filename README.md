@@ -47,6 +47,16 @@ idle -> recording -> transcribing -> polishing -> pasting -> idle
 
 `polishing` is skipped if the profile disables LLM rewriting.
 
+### ASR Backends
+
+| `asr.backend` | Engine | Notes |
+|---------------|--------|-------|
+| `parakeet` | CrispASR + Parakeet TDT v3 0.6B (default) | local GPU/CPU GGUF, warm server on port 8081 |
+| `gemini` | Gemini hosted `gemini-3.5-transcribe` | no local model, no GPU; needs an API key + ffmpeg |
+
+Both share the same `AsrBackend` interface, so profiles choose between them
+with one config key.
+
 ---
 
 ## Quick Start
@@ -120,6 +130,95 @@ mkdir -p ~/.config/dictum
 cp examples/config.toml ~/.config/dictum/config.toml
 # Edit profiles, ASR/LLM settings, output target
 ```
+
+---
+
+## Hosted Transcription (Gemini)
+
+For machines without a GPU — or anyone who would rather not download and run a
+local ASR model — the `gemini` ASR backend transcribes through Google's hosted
+non-live API. Dictum Opus-compresses the recording locally (mono, 32 kbps by
+default) and sends clips up to 128 KiB inline in one request. Larger clips use
+the resumable Files API and are deleted after transcription. Inline audio avoids
+upload setup and cleanup latency at the cost of about 33% more request data;
+HTTP connections are reused by the daemon.
+
+```bash
+cp examples/config-gemini.toml ~/.config/dictum/config.toml
+```
+
+### 1. Install FFmpeg
+
+The encoder must include `libopus`:
+
+```bash
+sudo apt install ffmpeg        # Debian/Ubuntu
+sudo dnf install ffmpeg        # Fedora
+sudo pacman -S ffmpeg          # Arch
+
+ffmpeg -encoders | grep opus   # expect: libopus
+```
+
+No live/streaming API is required — Dictum uploads a finished recording.
+
+### 2. Store the API key outside the repo
+
+```bash
+mkdir -p ~/.config/dictum
+printf 'GEMINI_API_KEY=AIza...\n' > ~/.config/dictum/.env
+chmod 600 ~/.config/dictum/.env
+```
+
+`GEMINI_API_KEY` is the default variable name; override it with
+`asr.gemini_api_key_env` if you prefer another name. The key is sent as an
+`x-goog-api-key` header, is never written to logs or error messages, and is
+never put in `config.toml`.
+
+### 3. Give the daemon access to the key
+
+The daemon reads its profile at startup, so a systemd drop-in must both export
+the key **and** select the `gemini` profile — otherwise the bundled unit runs
+the default profile and spins up the local Parakeet/LLM models. Recommended:
+
+```bash
+mkdir -p ~/.config/systemd/user/dictum.service.d
+cat > ~/.config/systemd/user/dictum.service.d/10-gemini.conf <<'EOF'
+[Service]
+# An empty ExecStart= clears the bundled ExecStart before the replacement.
+ExecStart=
+ExecStart=%h/.local/bin/dictum daemon --profile gemini
+EnvironmentFile=%h/.config/dictum/.env
+EOF
+systemctl --user daemon-reload
+systemctl --user restart dictum
+```
+
+Or in the foreground / for one-shot runs:
+
+```bash
+set -a; . ~/.config/dictum/.env; set +a
+dictum daemon --profile gemini
+dictum once --profile gemini --result stdout --duration 30
+```
+
+### 4. Useful knobs
+
+```toml
+[profiles.gemini.asr]
+gemini_model = "gemini-3.5-transcribe"  # hosted model
+gemini_bitrate_kbps = 32                # mono Opus upload bitrate (24-32 suits speech)
+gemini_transcription_mode = "smart"     # "smart" (cleanup) or "verbatim" (raw)
+gemini_language_codes = []              # e.g. ["en-US"]; empty = auto-detect
+gemini_timeout_seconds = 120.0          # upload budget for slow links
+```
+
+Since the hosted model already returns readable text, the Gemini profile sets
+`[profiles.gemini.llm] backend = "none"`: no local llama.cpp server, no model
+download, and no polishing step in the pipeline.
+
+Failures (missing key, missing ffmpeg, auth, quota, upload errors) raise an
+actionable message and stop the job — Dictum never silently falls back to a
+local model or retries a billable transcription.
 
 ---
 

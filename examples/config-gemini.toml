@@ -1,0 +1,80 @@
+# Gemini hosted transcription — no local model, no GPU, no live streaming.
+#
+#   cp examples/config-gemini.toml ~/.config/dictum/config.toml
+#
+# The recording is Opus-compressed locally with ffmpeg and transcribed by
+# gemini-3.5-transcribe through the Interactions API (non-live). Small clips
+# are sent inline; larger clips use the Files API.
+#
+# ── Prerequisites ───────────────────────────────────────────────────────────
+# 1. FFmpeg with an Opus encoder:
+#      Debian/Ubuntu  sudo apt install ffmpeg
+#      Fedora         sudo dnf install ffmpeg
+#      Arch           sudo pacman -S ffmpeg
+#    Check with: ffmpeg -encoders | grep opus
+#
+# 2. An API key in an environment variable — never in this file:
+#      mkdir -p ~/.config/dictum
+#      printf 'GEMINI_API_KEY=AIza...\n' > ~/.config/dictum/.env
+#      chmod 600 ~/.config/dictum/.env
+#
+# 3. Make the key visible to the daemon, one of:
+#    * systemd user service drop-in (recommended). The daemon reads its
+#      profile at startup, so also select the gemini profile — an empty
+#      ExecStart= clears the bundled default before the replacement, or the
+#      unit would start the local Parakeet/LLM models:
+#        mkdir -p ~/.config/systemd/user/dictum.service.d
+#        cat > ~/.config/systemd/user/dictum.service.d/10-gemini.conf <<'EOF'
+#        [Service]
+#        ExecStart=
+#        ExecStart=%h/.local/bin/dictum daemon --profile gemini
+#        EnvironmentFile=%h/.config/dictum/.env
+#        EOF
+#        systemctl --user daemon-reload
+#        systemctl --user restart dictum
+#    * foreground run / one-shot CLI:
+#        set -a; . ~/.config/dictum/.env; set +a
+#        dictum daemon --profile gemini
+#        dictum once --profile gemini --result stdout
+#
+# Docs: https://ai.google.dev/gemini-api/docs/transcribe
+
+[profiles.gemini]
+result = "paste"  # paste | clipboard | stdout | file | none
+
+[profiles.gemini.asr]
+backend = "gemini"
+
+# Hosted transcription model. The `model` key used by the local Parakeet
+# backend is deliberately not forwarded here.
+gemini_model = "gemini-3.5-transcribe"
+
+# Name of the environment variable that holds the API key.
+gemini_api_key_env = "GEMINI_API_KEY"
+
+# Opus compression for the upload: mono, 24-32 kbps is plenty for speech and
+# keeps uploads practical on a slow connection. Raise it only for noisy audio.
+gemini_bitrate_kbps = 32
+
+# "smart" = transcription with punctuation and light cleanup (default),
+# "verbatim" = raw words, no cleanup.
+gemini_transcription_mode = "smart"
+
+# Optional BCP-47 language hints; empty lets the model detect the language.
+gemini_language_codes = []
+# gemini_language_codes = ["en-US"]
+
+# ffmpeg executable used to encode Ogg Opus (must have the libopus encoder).
+gemini_ffmpeg_path = "ffmpeg"
+
+# Upload/request budget in seconds; generous by default for slow uplinks.
+gemini_timeout_seconds = 120.0
+
+# Send Opus clips up to this size inline (avoids Files API setup latency).
+# Set to 0 to always use the Files API.
+gemini_inline_max_bytes = 131072
+
+[profiles.gemini.llm]
+# The hosted model already returns readable text, so skip local polishing
+# entirely — no llama.cpp server, no local model, no extra latency.
+backend = "none"

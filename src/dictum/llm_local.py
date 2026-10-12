@@ -227,12 +227,31 @@ class ManagedLocalLlm(LlmBackend):
         return text
 
 
+def polish_enabled(profile: Profile) -> bool:
+    """True when the profile wants LLM polishing.
+
+    Polishing is enabled by default: a profile without an explicit ``[llm]``
+    section still gets a default ``LlmConfig`` (managed-local), so the pipeline
+    polishes. Polishing is disabled only when ``profile.llm`` is ``None`` (e.g.
+    a Profile built in Python with ``llm=None``) or the configured backend is
+    ``"none"``. In both disabled cases the polishing pipeline step is skipped
+    entirely, not merely turned into a no-op.
+    """
+    llm = profile.llm
+    if llm is None:
+        return False
+    return llm.backend.strip().lower() != "none"
+
+
 def create_llm_backend(profile: Profile) -> LlmBackend:
     """Factory to create the appropriate LLM backend from profile config.
 
     When Vulkan is unavailable, returns NoopLLM regardless of profile config.
     """
-    if not profile.llm or profile.llm.backend == "none":
+    if not profile.llm:
+        return NoopLLM()
+
+    if not polish_enabled(profile):
         return NoopLLM()
 
     # Vulkan is required for managed-local GPU inference

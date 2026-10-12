@@ -206,7 +206,11 @@ class ParakeetASR(AsrBackend):
 
 
 def create_asr_backend(profile: Profile, use_server: bool = True) -> AsrBackend:
-    """Factory to create ASR backend from profile config."""
+    """Factory to create ASR backend from profile config.
+
+    `use_server` only applies to local backends that keep a warm model in a
+    long-lived process; hosted backends ignore it.
+    """
     asr_cfg = profile.asr
     backend_name = asr_cfg.backend.lower() if asr_cfg else "parakeet"
 
@@ -219,6 +223,23 @@ def create_asr_backend(profile: Profile, use_server: bool = True) -> AsrBackend:
             port=DEFAULT_PORT,
             threads=4,
             use_server=use_server,
+        )
+
+    if backend_name == "gemini":
+        from dictum.asr_gemini import GeminiASR
+
+        # Note: the local Parakeet model name is deliberately not forwarded —
+        # the hosted model comes from `gemini_model`.
+        return GeminiASR(
+            api_key_env=asr_cfg.gemini_api_key_env,
+            model=asr_cfg.gemini_model,
+            base_url=asr_cfg.gemini_base_url,
+            bitrate_kbps=asr_cfg.gemini_bitrate_kbps,
+            transcription_mode=asr_cfg.gemini_transcription_mode,
+            language_codes=list(asr_cfg.gemini_language_codes),
+            ffmpeg_path=asr_cfg.gemini_ffmpeg_path,
+            timeout=asr_cfg.gemini_timeout_seconds,
+            inline_max_bytes=asr_cfg.gemini_inline_max_bytes,
         )
 
     log.warning("Unknown ASR backend: %s, falling back to parakeet", backend_name)

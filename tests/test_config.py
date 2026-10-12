@@ -146,6 +146,25 @@ backend = "none"
     assert profile.llm.backend == "none"
 
 
+def test_load_profile_without_llm_section_keeps_default_llm(config_dir: Path) -> None:
+    """Omitting [llm] keeps the default managed-local LLM (polishing enabled)."""
+    from dictum.llm_local import polish_enabled
+
+    _write_config(
+        config_dir,
+        """
+[profiles.default]
+result = "clipboard"
+[profiles.default.asr]
+backend = "parakeet"
+""",
+    )
+    profile = load_profile("default")
+    assert profile.llm is not None
+    assert profile.llm.backend == "managed-local"
+    assert polish_enabled(profile)
+
+
 def test_load_profile_prompt_file(config_dir: Path) -> None:
     """Loads prompt from an external file via prompt_file."""
     prompt_file = config_dir / "custom_prompt.txt"
