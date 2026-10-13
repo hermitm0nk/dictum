@@ -224,6 +224,24 @@ def _parse_uploaded_file(body: dict[str, Any]) -> UploadedFile:
     )
 
 
+def _response_shape(body: dict[str, Any]) -> str:
+    """Describe structure only; never echo arbitrary keys or response values."""
+    fields = ("id", "status", "steps", "outputs", "output_text", "candidates", "error", "usage")
+    shapes = []
+    for field in fields:
+        if field in body:
+            value = body[field]
+            shape = type(value).__name__
+            if isinstance(value, list):
+                shape += f"({len(value)})"
+            shapes.append(f"{field}={shape}")
+    status = body.get("status")
+    if isinstance(status, str) and status in ("completed", "failed", "in_progress", "cancelled"):
+        shapes.append(f"status={status}")
+    shapes.append(f"other_fields={sum(key not in fields for key in body)}")
+    return ", ".join(shapes)
+
+
 def _extract_transcript(body: dict[str, Any], secret: str | None) -> str:
     """Pull the transcript text out of an Interactions API response.
 
@@ -244,22 +262,38 @@ def _extract_transcript(body: dict[str, Any], secret: str | None) -> str:
 
     steps = body.get("steps")
     if not isinstance(steps, list):
-        raise GeminiError("Gemini interaction response did not contain 'steps'")
+        if not body:
+            reason = "empty JSON object; missing 'steps'"
+        elif "steps" not in body:
+            reason = "missing 'steps'; unexpected response schema"
+        else:
+            reason = f"invalid 'steps' type: {type(steps).__name__}"
+        raise GeminiError(f"Gemini interaction response: {reason} ({_response_shape(body)})")
 
     chunks: list[str] = []
     for step in steps:
-        if not isinstance(step, dict) or step.get("type") != "model_output":
+        if not isinstance(step, dict):
+            raise GeminiError(f"Gemini response: invalid step object ({_response_shape(body)})")
+        if step.get("type") != "model_output":
             continue
         content = step.get("content")
         if not isinstance(content, list):
-            continue
+            raise GeminiError(
+                f"Gemini response: invalid model_output content ({_response_shape(body)})"
+            )
         for part in content:
             if isinstance(part, dict) and part.get("type") == "text":
                 text = part.get("text")
-                if isinstance(text, str):
-                    chunks.append(text)
+                if not isinstance(text, str):
+                    raise GeminiError(
+                        f"Gemini response: invalid text value ({_response_shape(body)})"
+                    )
+                chunks.append(text)
 
-    return "\n".join(chunk.strip() for chunk in chunks if chunk.strip())
+    text = "\n".join(chunk.strip() for chunk in chunks if chunk.strip())
+    if not text:
+        log.warning("Gemini returned an empty transcript (%s)", _response_shape(body))
+    return text
 
 
 class GeminiASR(AsrBackend):
@@ -591,6 +625,8 @@ class GeminiASR(AsrBackend):
             )
         self._raise_for_status(r, "transcription", headers)
 
+        if not r.content.strip():
+            raise GeminiError("Gemini transcription response contained an empty HTTP body")
         try:
             body: Any = r.json()
         except ValueError as exc:

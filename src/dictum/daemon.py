@@ -207,7 +207,7 @@ class Daemon:
 
             elif cmd == "toggle":
                 target = ResultTarget(req.get("target", "paste"))
-                if self.state == DictumState.IDLE:
+                if self.state in (DictumState.IDLE, DictumState.FAILED):
                     # Start recording; respond immediately
                     self._start_recording()
                     resp = {"ok": True, "started": True}
@@ -222,7 +222,7 @@ class Daemon:
                     resp = {"ok": False, "error": f"Busy ({self.state.value})"}
 
             elif cmd == "start":
-                if self.state != DictumState.IDLE:
+                if self.state not in (DictumState.IDLE, DictumState.FAILED):
                     resp = {"ok": False, "error": f"Busy ({self.state.value})"}
                 else:
                     self._start_recording()
