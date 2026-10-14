@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dictum-asr"
-version = "0.4.1"
+version = "0.4.2"
 description = "Wayland hotkey dictation CLI and daemon with local or hosted transcription."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,7 @@ dependencies = [
   "typer>=0.12",
   "tqdm>=4.66",
   "huggingface-hub>=0.23",
+  "google-genai>=1.30",
 ]
 
 [project.optional-dependencies]
