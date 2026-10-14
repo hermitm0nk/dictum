@@ -22,6 +22,7 @@ DEFAULT_MODEL = "gemini-3.5-transcribe-live"
 DEFAULT_API_KEY_ENV = "GEMINI_API_KEY"
 DEFAULT_FFMPEG = "ffmpeg"
 DEFAULT_TIMEOUT = 120.0
+FINALIZATION_TIMEOUT = 10.0
 PCM_SAMPLE_RATE = 16_000
 PCM_CHUNK_BYTES = 3_200  # 100 ms, mono 16-bit PCM at 16 kHz
 MODES = {"smart", "verbatim"}
@@ -126,6 +127,9 @@ class GeminiLiveASR(AsrBackend):
         pcm = await self._to_pcm(audio_path)
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.TEXT],
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)
+            ),
             input_audio_transcription=types.AudioTranscriptionConfig(
                 language_codes=self.language_codes,
                 mode=(
@@ -138,9 +142,15 @@ class GeminiLiveASR(AsrBackend):
         client = genai.Client(api_key=api_key)
         chunks = 0
         text_parts: list[str] = []
+        phase = "connect"
         try:
             async with asyncio.timeout(self.timeout):
                 async with client.aio.live.connect(model=self.model, config=config) as session:
+                    phase = "send"
+                    log.info("Gemini Live connected (pcm_bytes=%d)", len(pcm))
+                    # A completed push-to-talk recording is one explicit activity,
+                    # not a microphone stream whose boundaries require server VAD.
+                    await session.send_realtime_input(activity_start=types.ActivityStart())
                     for offset in range(0, len(pcm), PCM_CHUNK_BYTES):
                         chunk = pcm[offset : offset + PCM_CHUNK_BYTES]
                         await session.send_realtime_input(
@@ -149,23 +159,30 @@ class GeminiLiveASR(AsrBackend):
                             )
                         )
                         chunks += 1
-                    await session.send_realtime_input(audio_stream_end=True)
-                    async for response in session.receive():
-                        content = response.server_content
-                        if content is None:
-                            continue
-                        transcription = content.input_transcription
-                        if transcription is not None:
-                            if transcription.text:
-                                text_parts.append(transcription.text)
-                            # Live transcription reports final input text but may
-                            # keep the WebSocket open for another live turn. This
-                            # Dictum request is one completed recording, so the
-                            # finalized transcript is the completion signal.
-                            break
-                        if content.turn_complete:
-                            break
+                    await session.send_realtime_input(activity_end=types.ActivityEnd())
+                    phase = "finalize"
+                    log.info("Gemini Live recording sent (audio_chunks=%d)", chunks)
+                    # Non-speech input can produce no final event at all. Do not
+                    # wait for the server's minute-long idle connection timeout.
+                    async with asyncio.timeout(min(self.timeout, FINALIZATION_TIMEOUT)):
+                        async for response in session.receive():
+                            content = response.server_content
+                            if content is None:
+                                continue
+                            transcription = content.input_transcription
+                            if transcription is not None:
+                                if transcription.text:
+                                    text_parts.append(transcription.text)
+                                break
+                            if content.turn_complete:
+                                break
         except TimeoutError as exc:
+            log.error("Gemini Live timed out (phase=%s)", phase)
+            if phase == "finalize":
+                raise GeminiLiveError(
+                    "Gemini Live returned no final transcript within the finalization deadline; "
+                    "check microphone input and retry"
+                ) from None
             raise GeminiLiveError(
                 "Gemini Live transcription timed out; retry the recording"
             ) from exc
@@ -173,17 +190,21 @@ class GeminiLiveASR(AsrBackend):
             raise
         except Exception as exc:
             # SDK exceptions may contain credential-bearing request URLs.
-            status_code = getattr(exc, "status_code", None)
+            status_code = getattr(exc, "code", getattr(exc, "status_code", None))
             if not isinstance(status_code, int):
                 status_code = "unknown"
             log.error(
-                "Gemini Live request failed (exception=%s, http_status=%s)",
+                "Gemini Live request failed (exception=%s, code=%s, phase=%s)",
                 type(exc).__name__,
                 status_code,
+                phase,
             )
             raise GeminiLiveError(
                 "Gemini Live transcription request failed; check service logs and retry"
             ) from None
+        finally:
+            await client.aio.aclose()
+            client.close()
 
         text = "".join(text_parts).strip()
         log.info(
