@@ -13,8 +13,12 @@ from dictum.models import Profile
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(
+        self, receive_error: Exception | None = None, *, hold_after_transcription: bool = False
+    ) -> None:
         self.sent: list[dict] = []
+        self.receive_error = receive_error
+        self.hold_after_transcription = hold_after_transcription
 
     async def __aenter__(self) -> FakeSession:
         return self
@@ -26,12 +30,16 @@ class FakeSession:
         self.sent.append(kwargs)
 
     async def receive(self):
+        if self.receive_error is not None:
+            raise self.receive_error
         yield types.SimpleNamespace(
             server_content=types.SimpleNamespace(
                 input_transcription=types.SimpleNamespace(text="live transcript"),
-                turn_complete=True,
+                turn_complete=not self.hold_after_transcription,
             )
         )
+        if self.hold_after_transcription:
+            await asyncio.Future()
 
 
 class FakeLive:
@@ -124,6 +132,23 @@ def test_live_backend_streams_pcm_and_returns_final_text(
     }
 
 
+def test_live_backend_returns_on_final_transcript_without_turn_complete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", "test-key")
+    monkeypatch.setattr("dictum.asr_gemini_live.shutil.which", lambda _: "/usr/bin/ffmpeg")
+    audio = tmp_path / "recording.wav"
+    audio.write_bytes(b"wav")
+    session = FakeSession(hold_after_transcription=True)
+    install_fake_genai(monkeypatch, session)
+    backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY", timeout=0.05)
+    monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"pcm"))
+
+    transcript = asyncio.run(backend.transcribe(audio))
+
+    assert transcript.text == "live transcript"
+
+
 def test_live_preflight_does_not_make_remote_calls_without_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -134,6 +159,32 @@ def test_live_preflight_does_not_make_remote_calls_without_key(
 
     with pytest.raises(RuntimeError, match="DICTUM_LIVE_MISSING_KEY"):
         asyncio.run(backend.transcribe(audio))
+
+
+def test_live_api_error_diagnostic_excludes_remote_message_and_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    class RemoteError(Exception):
+        status_code = 503
+
+    secret = "private-test-key"
+    monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", secret)
+    monkeypatch.setattr("dictum.asr_gemini_live.shutil.which", lambda _: "/usr/bin/ffmpeg")
+    audio = tmp_path / "recording.wav"
+    audio.write_bytes(b"wav")
+    session = FakeSession(RemoteError(f"remote body contains {secret}"))
+    install_fake_genai(monkeypatch, session)
+    backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
+    monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"pcm"))
+
+    with pytest.raises(RuntimeError, match="request failed"):
+        asyncio.run(backend.transcribe(audio))
+
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "RemoteError" in messages
+    assert "503" in messages
+    assert secret not in messages
+    assert "remote body" not in messages
 
 
 def test_existing_gemini_backend_remains_selectable() -> None:

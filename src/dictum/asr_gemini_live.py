@@ -155,8 +155,14 @@ class GeminiLiveASR(AsrBackend):
                         if content is None:
                             continue
                         transcription = content.input_transcription
-                        if transcription is not None and transcription.text:
-                            text_parts.append(transcription.text)
+                        if transcription is not None:
+                            if transcription.text:
+                                text_parts.append(transcription.text)
+                            # Live transcription reports final input text but may
+                            # keep the WebSocket open for another live turn. This
+                            # Dictum request is one completed recording, so the
+                            # finalized transcript is the completion signal.
+                            break
                         if content.turn_complete:
                             break
         except TimeoutError as exc:
@@ -165,8 +171,16 @@ class GeminiLiveASR(AsrBackend):
             ) from exc
         except GeminiLiveError:
             raise
-        except Exception:
+        except Exception as exc:
             # SDK exceptions may contain credential-bearing request URLs.
+            status_code = getattr(exc, "status_code", None)
+            if not isinstance(status_code, int):
+                status_code = "unknown"
+            log.error(
+                "Gemini Live request failed (exception=%s, http_status=%s)",
+                type(exc).__name__,
+                status_code,
+            )
             raise GeminiLiveError(
                 "Gemini Live transcription request failed; check service logs and retry"
             ) from None
