@@ -57,11 +57,12 @@ class AsrConfig(BaseModel):
     device: str = "cpu"
     precision: str = "q4_k"
 
-    # ── "gemini" backend (hosted, non-live file transcription) ──
-    # These are only read by dictum.asr_gemini.GeminiASR; `model` above stays
+    # ── Hosted Gemini transcription backends ──
+    # These are only read by hosted Gemini backends; `model` above stays
     # the local Parakeet model name so switching backend never forwards it to
     # a hosted API.
     gemini_model: str = "gemini-3.5-transcribe"
+    gemini_live_model: str = "gemini-3.5-transcribe-live"
     gemini_api_key_env: str = "GEMINI_API_KEY"  # env var holding the key, never the key
     gemini_base_url: str = "https://generativelanguage.googleapis.com"
     # mono Opus upload bitrate; Opus tops out at 510 kbps and 24-32 suits speech

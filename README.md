@@ -206,11 +206,20 @@ dictum once --profile gemini --result stdout --duration 30
 ```toml
 [profiles.gemini.asr]
 gemini_model = "gemini-3.5-transcribe"  # hosted model
+backend = "gemini"                      # "gemini" or "gemini-live"
+gemini_live_model = "gemini-3.5-transcribe-live"
 gemini_bitrate_kbps = 32                # mono Opus upload bitrate (24-32 suits speech)
 gemini_transcription_mode = "smart"     # "smart" (cleanup) or "verbatim" (raw)
 gemini_language_codes = []              # e.g. ["en-US"]; empty = auto-detect
 gemini_timeout_seconds = 120.0          # upload budget for slow links
 ```
+
+To use the low-latency Gemini Live transcription model instead, set
+`backend = "gemini-live"` in `[profiles.gemini.asr]`. Dictum streams the
+completed recording to the Live API as 16 kHz mono PCM; the existing
+`backend = "gemini"` Files/Interactions API remains available. Both backends
+use `gemini_api_key_env`, language hints, transcription mode, ffmpeg path, and
+timeout settings from the same profile.
 
 Since the hosted model already returns readable text, the Gemini profile sets
 `[profiles.gemini.llm] backend = "none"`: no local llama.cpp server, no model

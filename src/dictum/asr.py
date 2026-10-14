@@ -242,5 +242,17 @@ def create_asr_backend(profile: Profile, use_server: bool = True) -> AsrBackend:
             inline_max_bytes=asr_cfg.gemini_inline_max_bytes,
         )
 
+    if backend_name == "gemini-live":
+        from dictum.asr_gemini_live import GeminiLiveASR
+
+        return GeminiLiveASR(
+            api_key_env=asr_cfg.gemini_api_key_env,
+            model=asr_cfg.gemini_live_model,
+            transcription_mode=asr_cfg.gemini_transcription_mode,
+            language_codes=list(asr_cfg.gemini_language_codes),
+            ffmpeg_path=asr_cfg.gemini_ffmpeg_path,
+            timeout=asr_cfg.gemini_timeout_seconds,
+        )
+
     log.warning("Unknown ASR backend: %s, falling back to parakeet", backend_name)
     return ParakeetASR(use_server=use_server)

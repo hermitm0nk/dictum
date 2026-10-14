@@ -44,10 +44,12 @@ result = "paste"  # paste | clipboard | stdout | file | none
 
 [profiles.gemini.asr]
 backend = "gemini"
+# Set to "gemini-live" to use the Live API instead of file transcription.
 
 # Hosted transcription model. The `model` key used by the local Parakeet
 # backend is deliberately not forwarded here.
 gemini_model = "gemini-3.5-transcribe"
+gemini_live_model = "gemini-3.5-transcribe-live"
 
 # Name of the environment variable that holds the API key.
 gemini_api_key_env = "GEMINI_API_KEY"
