@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import queue
 import threading
 import time
 import wave
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import sounddevice as sd  # type: ignore[import-untyped]
+
+from dictum.backends import AudioStreamError
 
 
 def _native_rate() -> int:
@@ -50,17 +55,22 @@ class Recorder:
         self._thread: threading.Thread | None = None
         self._stopped = True
         self._last_path: Path | None = None
+        self._audio_queue: queue.Queue[np.ndarray] | None = None
+        self._stream_overflow = False
 
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self, *, streaming: bool = False) -> None:
         """Begin capturing audio into memory."""
         if self._thread is not None and self._thread.is_alive():
             return
 
         self._frames = []
+        # Bound the microphone/network backlog to about eight seconds at 48 kHz.
+        self._audio_queue = queue.Queue(maxsize=100) if streaming else None
+        self._stream_overflow = False
         self._stopped = False
         self._stop_event.clear()
 
@@ -106,6 +116,45 @@ class Recorder:
         self._frames = []
         return path
 
+    async def audio_chunks(self) -> AsyncIterator[bytes]:
+        """Yield capture as 16 kHz PCM without blocking the PortAudio callback.
+
+        Resampling uses a continuous sample clock across callback boundaries.
+        A slow consumer fails explicitly instead of silently dropping speech.
+        """
+        audio_queue = self._audio_queue
+        if audio_queue is None:
+            raise RuntimeError("Recorder was not started in streaming mode")
+        input_offset = 0
+        output_offset = 0
+        while True:
+            if not self.is_recording and not self._stopped:
+                # The watchdog has ended capture. Close PortAudio before draining
+                # so it cannot keep adding chunks behind the end of speech.
+                self.stop()
+            if self._stream_overflow:
+                raise AudioStreamError("Live audio queue overflow; check the network and retry")
+            try:
+                chunk = audio_queue.get_nowait()
+            except queue.Empty:
+                if not self.is_recording:
+                    break
+                await asyncio.sleep(0.01)
+                continue
+            mono = chunk.reshape(-1, self.channels).mean(axis=1)
+            end = input_offset + len(mono)
+            # Preserve the fractional resampling phase between chunks, including
+            # devices whose native rate is not a multiple of 16 kHz (44.1 kHz).
+            output_end = (end * 16_000 + self._native_rate - 1) // self._native_rate
+            positions = (
+                np.arange(output_offset, output_end) * self._native_rate // 16_000 - input_offset
+            )
+            pcm = mono[positions].astype("<i2").tobytes()
+            input_offset = end
+            output_offset = output_end
+            for offset in range(0, len(pcm), 3200):
+                yield pcm[offset : offset + 3200]
+
     @property
     def is_recording(self) -> bool:
         return not self._stopped and self._thread is not None and self._thread.is_alive()
@@ -140,8 +189,14 @@ class Recorder:
         time_info: Any,
         status: sd.CallbackFlags,
     ) -> None:  # noqa: ANN401
+        chunk = indata.copy()
         with self._lock:
-            self._frames.append(indata.copy())
+            self._frames.append(chunk)
+        if self._audio_queue is not None:
+            try:
+                self._audio_queue.put_nowait(chunk)
+            except queue.Full:
+                self._stream_overflow = True
 
     def _silence_watchdog(self) -> None:
         """Stop automatically after prolonged silence."""

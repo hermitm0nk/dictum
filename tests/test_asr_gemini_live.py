@@ -240,3 +240,136 @@ def test_existing_gemini_backend_remains_selectable() -> None:
     profile = Profile()
     profile.asr.backend = "gemini"
     assert isinstance(create_asr_backend(profile), GeminiASR)
+
+
+def test_live_audio_and_interim_text_flow_before_recording_ends(monkeypatch):
+    """The producer waits for a preview: sequential send/receive would deadlock."""
+
+    async def run():
+        received_audio = asyncio.Event()
+        preview_seen = asyncio.Event()
+        ended = asyncio.Event()
+        updates = []
+
+        def response(*, interim=None, final=None, complete=False):
+            return types.SimpleNamespace(
+                server_content=types.SimpleNamespace(
+                    interim_input_transcription=types.SimpleNamespace(text=interim)
+                    if interim
+                    else None,
+                    input_transcription=types.SimpleNamespace(text=final) if final else None,
+                    turn_complete=complete,
+                )
+            )
+
+        class StreamingSession(FakeSession):
+            async def send_realtime_input(self, **kwargs):
+                await super().send_realtime_input(**kwargs)
+                if "audio" in kwargs:
+                    received_audio.set()
+                if "activity_end" in kwargs:
+                    ended.set()
+
+            async def receive(self):
+                await received_audio.wait()
+                assert not ended.is_set()
+                yield response(interim="hel")
+                yield response(final="Hello ")
+                await ended.wait()
+                yield response(final="world.")
+                await asyncio.Future()  # Transcribe Live need not send turn_complete.
+
+        def update(text):
+            updates.append(text)
+            if text == "Hello ":
+                preview_seen.set()
+
+        async def audio():
+            yield b"\x00\x00" * 1600
+            await preview_seen.wait()
+            assert not ended.is_set()
+            yield b"\x01\x00" * 1600
+
+        monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", "test-key")
+        session = StreamingSession()
+        live = install_fake_genai(monkeypatch, session)
+        backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
+        transcript = await asyncio.wait_for(backend.transcribe_stream(audio(), on_update=update), 1)
+        assert transcript.text == "Hello world."
+        assert updates == ["hel", "Hello ", "Hello world."]
+        assert len([item for item in session.sent if "audio" in item]) == 2
+        assert live.closed
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["producer", "receiver", "cancel"])
+def test_stream_failure_or_cancel_closes_session_and_sibling(monkeypatch, failure):
+    async def run():
+        capturing = asyncio.Event()
+        producer_closed = asyncio.Event()
+        receiver_closed = asyncio.Event()
+
+        class Session(FakeSession):
+            async def receive(self):
+                try:
+                    await capturing.wait()
+                    if failure == "receiver":
+                        raise RuntimeError("remote failure")
+                    await asyncio.Future()
+                    yield
+                finally:
+                    receiver_closed.set()
+
+        async def audio():
+            try:
+                capturing.set()
+                yield b"\x00\x00"
+                await asyncio.sleep(0)
+                if failure == "producer":
+                    raise RuntimeError("capture failure")
+                await asyncio.Future()
+            finally:
+                producer_closed.set()
+
+        monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", "test-key")
+        live = install_fake_genai(monkeypatch, Session())
+        backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
+        task = asyncio.create_task(backend.transcribe_stream(audio()))
+        await capturing.wait()
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(RuntimeError, match="request failed"):
+                await asyncio.wait_for(task, 1)
+        assert producer_closed.is_set()
+        assert receiver_closed.is_set()
+        assert live.closed
+
+    asyncio.run(run())
+
+
+def test_live_drains_unfinished_transcription_chunks_after_activity_end(monkeypatch, tmp_path):
+    class ChunkedSession(FakeSession):
+        async def receive(self):
+            for text, finished in [("first ", False), ("second ", False), ("last", True)]:
+                assert "activity_end" in self.sent[-1]
+                yield types.SimpleNamespace(
+                    server_content=types.SimpleNamespace(
+                        input_transcription=types.SimpleNamespace(text=text, finished=finished),
+                        turn_complete=False,
+                    )
+                )
+                await asyncio.sleep(0)
+            await asyncio.Future()
+
+    monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", "test-key")
+    monkeypatch.setattr("dictum.asr_gemini_live.shutil.which", lambda _: "/usr/bin/ffmpeg")
+    audio = tmp_path / "recording.wav"
+    audio.write_bytes(b"wav")
+    install_fake_genai(monkeypatch, ChunkedSession())
+    backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
+    monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"pcm"))
+    assert asyncio.run(backend.transcribe(audio)).text == "first second last"
