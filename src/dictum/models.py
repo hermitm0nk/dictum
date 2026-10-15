@@ -70,7 +70,7 @@ class AsrConfig(BaseModel):
     gemini_transcription_mode: str = "smart"  # "smart" (rewritten) or "verbatim"
     gemini_language_codes: list[str] = Field(default_factory=list)  # e.g. ["en-US"]
     gemini_ffmpeg_path: str = "ffmpeg"  # needs an Opus encoder (libopus)
-    gemini_timeout_seconds: float = Field(default=120.0, gt=0)  # upload budget for slow links
+    gemini_timeout_seconds: float = Field(default=120.0, gt=0)  # I/O budget, not capture duration
     gemini_inline_max_bytes: int = Field(default=128 * 1024, ge=0)  # 0 forces Files API
 
 

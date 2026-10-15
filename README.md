@@ -216,10 +216,19 @@ gemini_timeout_seconds = 120.0          # upload budget for slow links
 
 To use the low-latency Gemini Live transcription model instead, set
 `backend = "gemini-live"` in `[profiles.gemini.asr]`. Dictum streams the
-completed recording to the Live API as 16 kHz mono PCM; the existing
-`backend = "gemini"` Files/Interactions API remains available. Both backends
-use `gemini_api_key_env`, language hints, transcription mode, ffmpeg path, and
-timeout settings from the same profile.
+microphone audio to the Live API as 16 kHz mono PCM while you speak, in both
+the daemon and `dictum once`. Sending audio and receiving transcripts run
+concurrently. `dictum status --json` includes `live_transcript` with the latest
+interim preview; finalized text is polished and delivered when recording ends
+(by hotkey, silence, or the one-shot duration limit). Cancel closes the session
+and discards the result. A slow network that fills the bounded audio queue
+fails the job rather than silently dropping speech.
+
+The existing `backend = "gemini"` Files/Interactions API remains available for
+completed recordings. Both backends use `gemini_api_key_env`, language hints,
+transcription mode, and timeout settings from the same profile. Live capture
+does not require ffmpeg; only file conversion does. For Live, the timeout bounds
+connection, individual sends and finalization rather than time spent speaking.
 
 Since the hosted model already returns readable text, the Gemini profile sets
 `[profiles.gemini.llm] backend = "none"`: no local llama.cpp server, no model

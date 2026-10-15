@@ -270,11 +270,11 @@ def test_once_uses_profile_asr_backend_and_skips_polish(
 
     assert result.exit_code == 0, result.stderr
     assert "hello from gemini" in result.stderr
-    # Recording → factory(use_server=False) → start/transcribe/stop → deliver.
+    # Select the backend before capture so streaming capabilities are available.
     assert events == [
+        "factory:use_server=False",
         "record-start",
         "record-stop",
-        "factory:use_server=False",
         "asr-start",
         "asr-transcribe",
         "asr-stop",

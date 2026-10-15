@@ -399,6 +399,7 @@ def once(
     profile, so a hosted (Gemini) profile works here too.
     """
     from dictum.asr import create_asr_backend
+    from dictum.backends import StreamingAsrBackend
     from dictum.config import load_profile
     from dictum.llm_local import create_llm_backend, polish_enabled
     from dictum.models import DictationResult, ResultTarget, Transcript
@@ -410,32 +411,57 @@ def once(
     console.print("[dim]Recording… (speak, then wait for silence)[/dim]")
 
     rec = Recorder(silence_timeout=1.5)
-    rec.start()
 
-    deadline = time.monotonic() + duration
-    while rec.is_recording and time.monotonic() < deadline:
-        time.sleep(0.1)
-
-    if rec.is_recording:
-        console.print("[dim]Max duration reached, stopping…[/dim]")
-
-    audio_path = rec.stop()
-    console.print(f"[dim]Saved {audio_path.stat().st_size} bytes[/dim]")
-
-    # Transcribe with the profile's ASR backend. `use_server=False` keeps the
-    # one-shot path standalone: local Parakeet runs as a CLI invocation and
-    # never attaches to (or starts) the daemon's warm server.
+    # Standalone local backends never attach to the daemon's warm server.
     asr = create_asr_backend(prof, use_server=False)
+    if isinstance(asr, StreamingAsrBackend):
+        streaming_asr = asr
 
-    async def _transcribe_once() -> Transcript:
-        await asr.start()
-        try:
-            return await asr.transcribe(audio_path, prof)
-        finally:
-            await asr.stop()
+        async def _live_once() -> Transcript:
+            await streaming_asr.start()
+            task: asyncio.Task[Transcript] | None = None
+            try:
+                rec.start(streaming=True)
+                task = asyncio.create_task(
+                    streaming_asr.transcribe_stream(rec.audio_chunks(), prof)
+                )
+                deadline = time.monotonic() + duration
+                while rec.is_recording and time.monotonic() < deadline and not task.done():
+                    await asyncio.sleep(0.05)
+                rec.stop()
+                return await task
+            finally:
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                try:
+                    rec.stop()
+                finally:
+                    await streaming_asr.stop()
 
-    console.print("[dim]Transcribing…[/dim]")
-    transcript = _run(_transcribe_once())
+        transcript = _run(_live_once())
+    else:
+        rec.start()
+
+        deadline = time.monotonic() + duration
+        while rec.is_recording and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        if rec.is_recording:
+            console.print("[dim]Max duration reached, stopping…[/dim]")
+
+        audio_path = rec.stop()
+        console.print(f"[dim]Saved {audio_path.stat().st_size} bytes[/dim]")
+
+        async def _transcribe_once() -> Transcript:
+            await asr.start()
+            try:
+                return await asr.transcribe(audio_path, prof)
+            finally:
+                await asr.stop()
+
+        console.print("[dim]Transcribing…[/dim]")
+        transcript = _run(_transcribe_once())
     console.print(f"[green]Transcript:[/green] {transcript.text}")
 
     # Polish (skipped when the profile disables the LLM, e.g. backend = "none")
