@@ -66,12 +66,12 @@ async def ipc(d, cmd, **kwargs):
     return json.loads(writer.write.call_args.args[0])
 
 
-@pytest.mark.parametrize("end", ["stop", "toggle", "silence", "cancel", "error"])
+@pytest.mark.parametrize("end", ["stop", "toggle", "cancel", "error"])
 def test_daemon_streams_during_capture_and_finishes_once(monkeypatch, tmp_path, end):
     async def run():
         rec = LiveRecorder(tmp_path / "audio.wav")
         asr = LiveAsr()
-        monkeypatch.setattr(daemon, "Recorder", lambda: rec)
+        monkeypatch.setattr(daemon, "Recorder", lambda **kw: rec)
         monkeypatch.setattr(daemon, "create_asr_backend", lambda *a, **kw: asr)
         profile = Profile(llm=LlmConfig(backend="none"))
         d = daemon.Daemon(profile)
@@ -83,9 +83,7 @@ def test_daemon_streams_during_capture_and_finishes_once(monkeypatch, tmp_path, 
         assert rec.is_recording
         assert (await ipc(d, "status"))["live_transcript"] == "speaking"
         deliver.assert_not_called()
-        if end == "silence":
-            rec.stop()  # watchdog-equivalent end of the audio iterator
-        elif end == "error":
+        if end == "error":
             asr.fail = True
             rec.ended.set()
             with pytest.raises(RuntimeError, match="stream failed"):
@@ -105,9 +103,55 @@ def test_daemon_streams_during_capture_and_finishes_once(monkeypatch, tmp_path, 
         else:
             result = await asyncio.wait_for(d._live_task, 1)
             assert result.final_text == "final text"
-            assert result.target == (ResultTarget.PASTE if end == "silence" else ResultTarget.NONE)
+            assert result.target == ResultTarget.NONE
             assert deliver.await_count == 1
             assert d.state == DictumState.IDLE
+
+    asyncio.run(run())
+
+
+def test_daemon_recorder_survives_silence_until_stopped(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setattr(recorder, "_native_rate", lambda: 16000)
+    monkeypatch.setattr(recorder.sd, "InputStream", lambda **kw: Mock())
+    monkeypatch.setattr(recorder.Recorder, "_write_wav", lambda *a: tmp_path / "audio.wav")
+    rec = recorder.Recorder(silence_timeout=None)
+    rec.start(streaming=True)
+    try:
+        rec._audio_callback(np.zeros((160, 1), dtype=np.int16), 160, None, None)
+        time.sleep(1.8)
+        assert rec.is_recording
+    finally:
+        rec.stop()
+    assert not rec.is_recording
+
+
+def test_daemon_configures_manual_stop(monkeypatch):
+    factory = Mock()
+    monkeypatch.setattr(daemon, "Recorder", factory)
+    monkeypatch.setattr(daemon, "create_asr_backend", Mock())
+    daemon.Daemon()
+    factory.assert_called_once_with(silence_timeout=None)
+
+
+def test_live_backend_return_before_stop_does_not_paste(monkeypatch, tmp_path):
+    async def run():
+        rec = LiveRecorder(tmp_path / "audio.wav")
+        asr = LiveAsr()
+        asr.transcribe_stream = AsyncMock(return_value=Transcript(text="partial"))
+        monkeypatch.setattr(daemon, "Recorder", lambda **kw: rec)
+        monkeypatch.setattr(daemon, "create_asr_backend", lambda *a, **kw: asr)
+        d = daemon.Daemon(Profile(llm=LlmConfig(backend="none")))
+        monkeypatch.setattr(d, "_notify_state", AsyncMock())
+        deliver = AsyncMock()
+        monkeypatch.setattr(d.output, "deliver", deliver)
+        await ipc(d, "start")
+        with pytest.raises(RuntimeError, match="before recording was stopped"):
+            await d._live_task
+        assert d.state == DictumState.FAILED
+        assert not rec.is_recording
+        deliver.assert_not_called()
 
     asyncio.run(run())
 

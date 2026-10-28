@@ -42,7 +42,7 @@ class Daemon:
         self.last_result: DictationResult | None = None
 
         # Backends
-        self.recorder = Recorder()
+        self.recorder = Recorder(silence_timeout=None)
         self.asr: AsrBackend = create_asr_backend(self.active_profile, use_server=True)
         self.llm: LlmBackend = create_llm_backend(self.active_profile)
         self.output = OutputSink()
@@ -137,14 +137,19 @@ class Daemon:
 
     async def _record_live(self, asr: StreamingAsrBackend) -> DictationResult:
         profile = self.active_profile
+        capture_ended = False
 
         async def audio() -> AsyncIterator[bytes]:
+            nonlocal capture_ended
             async for chunk in self.recorder.audio_chunks():
                 yield chunk
+            capture_ended = True
             self._set(DictumState.TRANSCRIBING)
 
         try:
             transcript = await asr.transcribe_stream(audio(), profile, self._update_live_transcript)
+            if not capture_ended:
+                raise RuntimeError("Live transcription ended before recording was stopped")
             self._stop_recording()
             return await self._finish_transcript(transcript, profile, self._live_target)
         except asyncio.CancelledError:
@@ -234,7 +239,7 @@ class Daemon:
         return await self._process_audio(audio_path, profile, target)
 
     async def _wait_for_recording(self) -> Path:
-        """Block until the recorder's silence watchdog fires or it's stopped externally."""
+        """Block until the recording is stopped externally."""
         while self.recorder.is_recording:
             await asyncio.sleep(0.1)
         return self._stop_recording()

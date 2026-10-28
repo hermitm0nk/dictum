@@ -219,8 +219,9 @@ To use the low-latency Gemini Live transcription model instead, set
 microphone audio to the Live API as 16 kHz mono PCM while you speak, in both
 the daemon and `dictum once`. Sending audio and receiving transcripts run
 concurrently. `dictum status --json` includes `live_transcript` with the latest
-interim preview; finalized text is polished and delivered when recording ends
-(by hotkey, silence, or the one-shot duration limit). Cancel closes the session
+interim preview; finalized text is polished and delivered when recording ends.
+Daemon recordings continue through silence until stopped by a command or hotkey;
+`dictum once` ends on silence or its duration limit. Cancel closes the session
 and discards the result. A slow network that fills the bounded audio queue
 fails the job rather than silently dropping speech.
 

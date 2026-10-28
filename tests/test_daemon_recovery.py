@@ -18,7 +18,7 @@ from dictum.state import DictumState
 @pytest.mark.parametrize("initial", [DictumState.IDLE, DictumState.FAILED])
 def test_recording_can_start_from_idle_or_failed(monkeypatch, command, initial):
     recorder = Mock()
-    monkeypatch.setattr(daemon, "Recorder", lambda: recorder)
+    monkeypatch.setattr(daemon, "Recorder", lambda **kw: recorder)
     monkeypatch.setattr(daemon, "create_asr_backend", lambda *a, **kw: Mock())
     monkeypatch.setattr(daemon, "create_llm_backend", lambda *a, **kw: Mock())
     d = daemon.Daemon(Profile())
@@ -51,7 +51,7 @@ def test_recording_can_start_from_idle_or_failed(monkeypatch, command, initial):
 )
 def test_recording_does_not_start_while_processing(monkeypatch, command, initial):
     recorder = Mock()
-    monkeypatch.setattr(daemon, "Recorder", lambda: recorder)
+    monkeypatch.setattr(daemon, "Recorder", lambda **kw: recorder)
     monkeypatch.setattr(daemon, "create_asr_backend", lambda *a, **kw: Mock())
     monkeypatch.setattr(daemon, "create_llm_backend", lambda *a, **kw: Mock())
     d = daemon.Daemon(Profile())

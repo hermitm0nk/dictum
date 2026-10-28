@@ -39,7 +39,7 @@ class Recorder:
         channels: int = 1,
         dtype: str = "int16",
         silence_threshold: float = 0.01,
-        silence_timeout: float = 1.5,
+        silence_timeout: float | None = 1.5,
     ) -> None:
         self.target_rate = sample_rate
         self.channels = channels
@@ -200,6 +200,9 @@ class Recorder:
 
     def _silence_watchdog(self) -> None:
         """Stop automatically after prolonged silence."""
+        if self.silence_timeout is None:
+            self._stop_event.wait()
+            return
         silent_since: float | None = None
         while not self._stop_event.is_set():
             self._stop_event.wait(timeout=0.1)
