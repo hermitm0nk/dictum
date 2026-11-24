@@ -59,8 +59,9 @@ def install_fake_genai(monkeypatch: pytest.MonkeyPatch, session: FakeSession) ->
             self.values = kwargs
 
     class Client:
-        def __init__(self, *, api_key: str) -> None:
+        def __init__(self, *, api_key: str, http_options: object = None) -> None:
             self.api_key = api_key
+            live.http_options = http_options
             self.aio = types.SimpleNamespace(live=live, aclose=self.aclose)
 
         async def aclose(self) -> None:
@@ -70,9 +71,11 @@ def install_fake_genai(monkeypatch: pytest.MonkeyPatch, session: FakeSession) ->
             pass
 
     live = FakeLive(session)
+    live.http_options = None
     genai = types.ModuleType("google.genai")
     genai.Client = Client
     genai_types = types.ModuleType("google.genai.types")
+    genai_types.HttpOptions = Config
     genai_types.LiveConnectConfig = Config
     genai_types.AudioTranscriptionConfig = Config
     genai_types.Blob = Config
@@ -137,6 +140,8 @@ def test_live_backend_streams_pcm_and_returns_final_text(
     assert session.sent[1]["audio"].values["mime_type"] == "audio/pcm;rate=16000"
     assert "activity_end" in session.sent[-1]
     assert live.kwargs["model"] == "gemini-3.5-transcribe-live"
+    assert live.http_options is not None
+    assert live.http_options.values == {"api_version": "v1beta"}
     config = live.kwargs["config"].values
     assert config["response_modalities"] == ["TEXT"]
     assert config["realtime_input_config"].values["automatic_activity_detection"].values == {
@@ -373,3 +378,70 @@ def test_live_drains_unfinished_transcription_chunks_after_activity_end(monkeypa
     backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
     monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"pcm"))
     assert asyncio.run(backend.transcribe(audio)).text == "first second last"
+
+
+def test_live_activity_end_completes_without_timeout_on_silence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class SilenceSession(FakeSession):
+        async def receive(self):
+            yield types.SimpleNamespace(
+                server_content=types.SimpleNamespace(
+                    input_transcription=None,
+                    interim_input_transcription=None,
+                    turn_complete=False,
+                ),
+                voice_activity=types.SimpleNamespace(voice_activity_type="ACTIVITY_START"),
+            )
+            while not any("activity_end" in item for item in self.sent):
+                await asyncio.sleep(0)
+            yield types.SimpleNamespace(
+                server_content=types.SimpleNamespace(
+                    input_transcription=None,
+                    interim_input_transcription=None,
+                    turn_complete=False,
+                ),
+                voice_activity=types.SimpleNamespace(voice_activity_type="ACTIVITY_END"),
+            )
+            await asyncio.Future()
+
+    monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", "test-key")
+    monkeypatch.setattr("dictum.asr_gemini_live.shutil.which", lambda _: "/usr/bin/ffmpeg")
+    monkeypatch.setattr("dictum.asr_gemini_live.FINALIZATION_TIMEOUT", 0.05, raising=False)
+    audio = tmp_path / "silence.wav"
+    audio.write_bytes(b"wav")
+    install_fake_genai(monkeypatch, SilenceSession())
+    backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY", timeout=120)
+    monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"\x00" * 3200))
+
+    transcript = asyncio.run(asyncio.wait_for(backend.transcribe(audio), timeout=0.5))
+    assert transcript.text == ""
+
+
+def test_live_websocket_invalid_status_logs_response_status_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class InvalidStatus(Exception):
+        def __init__(self, msg: str, status_code: int) -> None:
+            super().__init__(msg)
+            self.response = types.SimpleNamespace(status_code=status_code)
+
+    secret = "private-ws-key"
+    monkeypatch.setenv("DICTUM_LIVE_TEST_KEY", secret)
+    monkeypatch.setattr("dictum.asr_gemini_live.shutil.which", lambda _: "/usr/bin/ffmpeg")
+    audio = tmp_path / "recording.wav"
+    audio.write_bytes(b"wav")
+    session = FakeSession(InvalidStatus(f"HTTP 404 {secret}", 404))
+    install_fake_genai(monkeypatch, session)
+    backend = GeminiLiveASR(api_key_env="DICTUM_LIVE_TEST_KEY")
+    monkeypatch.setattr(backend, "_to_pcm", lambda _: asyncio.sleep(0, result=b"pcm"))
+
+    with pytest.raises(RuntimeError, match="request failed"):
+        asyncio.run(backend.transcribe(audio))
+
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "InvalidStatus" in messages
+    assert "code=404" in messages
+    assert secret not in messages

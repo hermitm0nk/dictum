@@ -144,7 +144,8 @@ class Daemon:
             async for chunk in self.recorder.audio_chunks():
                 yield chunk
             capture_ended = True
-            self._set(DictumState.TRANSCRIBING)
+            if self.state != DictumState.TRANSCRIBING:
+                self._set(DictumState.TRANSCRIBING)
 
         try:
             transcript = await asr.transcribe_stream(audio(), profile, self._update_live_transcript)
@@ -349,6 +350,12 @@ class Daemon:
             SOCKET_PATH.unlink()
 
         # Start ASR backend (server mode for warm model)
+        log.info(
+            "Starting daemon (profile=%s, asr=%s, llm=%s)",
+            self.active_profile.name,
+            type(self.asr).__name__,
+            type(self.llm).__name__,
+        )
         try:
             await self.asr.start()
             log.info("ASR backend started")
@@ -417,8 +424,10 @@ class Daemon:
 
 def run_daemon(profile_name: str = "default") -> None:
     """Entry point for `dictum daemon`."""
+    level_name = os.environ.get("DICTUM_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
         stream=sys.stderr,
     )

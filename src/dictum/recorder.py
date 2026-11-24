@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import threading
 import time
@@ -15,6 +16,8 @@ import numpy as np
 import sounddevice as sd  # type: ignore[import-untyped]
 
 from dictum.backends import AudioStreamError
+
+log = logging.getLogger(__name__)
 
 
 def _native_rate() -> int:
@@ -82,6 +85,15 @@ class Recorder:
             callback=self._audio_callback,
         )
         self._stream.start()
+        log.info(
+            "Recorder started (native_rate=%d, target_rate=%d, channels=%d, streaming=%s, "
+            "silence_timeout=%s)",
+            self._native_rate,
+            self.target_rate,
+            self.channels,
+            streaming,
+            self.silence_timeout,
+        )
         self._thread = threading.Thread(target=self._silence_watchdog, daemon=True)
         self._thread.start()
 
@@ -102,11 +114,25 @@ class Recorder:
             self._stream = None
 
         with self._lock:
+            frame_count = len(self._frames)
             audio = (
                 np.concatenate(self._frames)
                 if self._frames
                 else np.zeros(self._native_rate, dtype=self.dtype)
             )
+
+        samples = audio.flatten().astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(samples**2))) if len(samples) else 0.0
+        peak = float(np.max(np.abs(samples))) if len(samples) else 0.0
+        duration_s = len(samples) / self._native_rate if self._native_rate else 0.0
+        log.info(
+            "Recorder stopped (callbacks=%d, duration_s=%.2f, rms=%.4f, peak=%.4f, overflow=%s)",
+            frame_count,
+            duration_s,
+            rms,
+            peak,
+            self._stream_overflow,
+        )
 
         # Resample from native rate to target rate (16 kHz)
         if self._native_rate != self.target_rate:
@@ -189,6 +215,8 @@ class Recorder:
         time_info: Any,
         status: sd.CallbackFlags,
     ) -> None:  # noqa: ANN401
+        if status:
+            log.warning("PortAudio callback status: %s", status)
         chunk = indata.copy()
         with self._lock:
             self._frames.append(chunk)
